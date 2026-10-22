@@ -16,6 +16,8 @@ Every `interval` it reads every page of the inbox, sorts the messages oldest fir
 
 Messages are left on the SIM.
 
+If the dongle stays unreachable for `alert_after` (10 minutes by default), a Telegram alert says SMS are not being received, and another says when it is back. Shorter blips, like a dongle reboot, are not reported. A Telegram outage cannot be reported over Telegram, so delivery failures are only logged (and retried).
+
 ## Install
 
 ```bash

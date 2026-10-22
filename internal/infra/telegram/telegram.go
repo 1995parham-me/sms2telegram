@@ -70,7 +70,16 @@ type response struct {
 
 // Notify implements sms.Notifier.
 func (b *Bot) Notify(ctx context.Context, msg sms.SMS) error {
-	payload, err := json.Marshal(request{ChatID: b.chatID, Text: Format(msg), ParseMode: "HTML"})
+	return b.send(ctx, Format(msg))
+}
+
+// Text sends a plain-text message, such as an alert about the modem.
+func (b *Bot) Text(ctx context.Context, text string) error {
+	return b.send(ctx, html.EscapeString(text))
+}
+
+func (b *Bot) send(ctx context.Context, text string) error {
+	payload, err := json.Marshal(request{ChatID: b.chatID, Text: text, ParseMode: "HTML"})
 	if err != nil {
 		return fmt.Errorf("encoding telegram request: %w", err)
 	}

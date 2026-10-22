@@ -3,11 +3,16 @@ package forwarder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
 	"github.com/1995parham-me/sms2telegram/internal/domain/sms"
 )
+
+// ErrInbox marks a pass that failed because the modem could not be read, as
+// opposed to a failed delivery.
+var ErrInbox = errors.New("reading inbox")
 
 // Forwarder delivers every message it has not delivered before.
 type Forwarder struct {
@@ -29,7 +34,7 @@ func New(inbox sms.Inbox, notifier sms.Notifier, store sms.Store) *Forwarder {
 func (f *Forwarder) Forward(ctx context.Context) (int, error) {
 	msgs, err := f.inbox.List(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("reading inbox: %w", err)
+		return 0, fmt.Errorf("%w: %w", ErrInbox, err)
 	}
 
 	// The modem's date format ("2006-01-02 15:04:05") sorts lexically.

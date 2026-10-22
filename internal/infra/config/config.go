@@ -42,16 +42,20 @@ type Telegram struct {
 	Timeout time.Duration `json:"timeout" koanf:"timeout"`
 }
 
-// Forwarder controls polling and where delivered keys are remembered.
+// Forwarder controls polling, outage alerts and where delivered keys are
+// remembered. AlertAfter is how long the modem may stay unreachable before a
+// Telegram alert goes out; zero disables alerts.
 type Forwarder struct {
-	Interval  time.Duration `json:"interval"   koanf:"interval"`
-	StateFile string        `json:"state_file" koanf:"state_file"`
+	Interval   time.Duration `json:"interval"    koanf:"interval"`
+	AlertAfter time.Duration `json:"alert_after" koanf:"alert_after"`
+	StateFile  string        `json:"state_file"  koanf:"state_file"`
 }
 
 const (
 	modemTimeout     = 10 * time.Second
 	telegramTimeout  = 30 * time.Second
 	forwardInterval  = 30 * time.Second
+	alertAfter       = 10 * time.Minute
 	defaultStateFile = "sms2telegram-state.json"
 )
 
@@ -65,7 +69,7 @@ func Default() Config {
 			ChatID:  "",
 			Timeout: telegramTimeout,
 		},
-		Forwarder: Forwarder{Interval: forwardInterval, StateFile: defaultStateFile},
+		Forwarder: Forwarder{Interval: forwardInterval, AlertAfter: alertAfter, StateFile: defaultStateFile},
 	}
 }
 

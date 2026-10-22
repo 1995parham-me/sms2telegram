@@ -16,5 +16,8 @@ timeout = "30s"
 
 [forwarder]
 interval = "30s"
+# Telegram alert when the modem has been unreachable this long, and again when
+# it is back. "0s" turns alerts off.
+alert_after = "10m"
 # Keys of the messages already delivered, so a restart sends nothing twice.
 state_file = "/var/lib/sms2telegram/state.json"

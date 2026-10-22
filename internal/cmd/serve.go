@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/1995parham-me/sms2telegram/internal/domain/forwarder"
+	"github.com/1995parham-me/sms2telegram/internal/domain/health"
 	"github.com/1995parham-me/sms2telegram/internal/infra/config"
 	"github.com/1995parham-me/sms2telegram/internal/infra/mifi"
 	"github.com/1995parham-me/sms2telegram/internal/infra/state"
@@ -38,7 +39,7 @@ func serve(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fwd, err := build(cfg)
+	fwd, bot, err := build(cfg)
 	if err != nil {
 		return err
 	}
@@ -49,14 +50,26 @@ func serve(ctx context.Context, cmd *cli.Command) error {
 		return pass(ctx, fwd)
 	}
 
+	return loop(ctx, cfg, fwd, bot)
+}
+
+func loop(ctx context.Context, cfg config.Config, fwd *forwarder.Forwarder, bot *telegram.Bot) error {
 	ticker := time.NewTicker(cfg.Forwarder.Interval)
 	defer ticker.Stop()
+
+	tracker := health.NewTracker(cfg.Forwarder.AlertAfter)
 
 	for {
 		// A failed pass is retried on the next tick; the modem drops off USB
 		// on reboots and Telegram may be unreachable for a while.
-		if err := pass(ctx, fwd); err != nil {
+		err := pass(ctx, fwd)
+		if err != nil {
 			slog.WarnContext(ctx, "pass failed", "error", err)
+		}
+
+		// Only modem failures count: a Telegram outage cannot be reported over Telegram.
+		if cfg.Forwarder.AlertAfter > 0 && (err == nil || errors.Is(err, forwarder.ErrInbox)) {
+			alert(ctx, bot, tracker, err)
 		}
 
 		select {
@@ -67,24 +80,44 @@ func serve(ctx context.Context, cmd *cli.Command) error {
 	}
 }
 
-func build(cfg config.Config) (*forwarder.Forwarder, error) {
+func build(cfg config.Config) (*forwarder.Forwarder, *telegram.Bot, error) {
 	if cfg.Telegram.Token == "" || cfg.Telegram.ChatID == "" {
-		return nil, errMissingTelegram
+		return nil, nil, errMissingTelegram
 	}
 
 	modem, err := mifi.New(cfg.Modem.URL, cfg.Modem.Timeout)
 	if err != nil {
-		return nil, fmt.Errorf("configuring modem: %w", err)
+		return nil, nil, fmt.Errorf("configuring modem: %w", err)
 	}
 
 	store, err := state.Open(cfg.Forwarder.StateFile)
 	if err != nil {
-		return nil, fmt.Errorf("opening state: %w", err)
+		return nil, nil, fmt.Errorf("opening state: %w", err)
 	}
 
 	bot := telegram.New(cfg.Telegram.APIURL, cfg.Telegram.Token, cfg.Telegram.ChatID, cfg.Telegram.Timeout)
 
-	return forwarder.New(modem, bot, store), nil
+	return forwarder.New(modem, bot, store), bot, nil
+}
+
+func alert(ctx context.Context, bot *telegram.Bot, tracker *health.Tracker, passErr error) {
+	now := time.Now()
+
+	var text string
+
+	switch event, since := tracker.Observe(now, passErr == nil); event {
+	case health.Down:
+		text = fmt.Sprintf("⚠️ sms2telegram: the modem has been unreachable since %s, so SMS are not being received.\n\n%v",
+			since.Format(time.DateTime), passErr)
+	case health.Up:
+		text = fmt.Sprintf("✅ sms2telegram: the modem is back after %s.", now.Sub(since).Round(time.Second))
+	case health.None:
+		return
+	}
+
+	if err := bot.Text(ctx, text); err != nil {
+		slog.WarnContext(ctx, "alert not delivered", "error", err)
+	}
 }
 
 func pass(ctx context.Context, fwd *forwarder.Forwarder) error {
