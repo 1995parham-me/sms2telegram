@@ -1,0 +1,10 @@
+/sms2telegram
+/dist/
+*.test
+*.out
+coverage.*
+.DS_Store
+/.idea
+/.vscode
+/config.toml
+sms2telegram-state.json

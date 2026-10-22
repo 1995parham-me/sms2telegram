@@ -1,0 +1,21 @@
+[Unit]
+Description=Forward the 4G dongle's SMS inbox to Telegram
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sms2telegram --config /etc/sms2telegram/config.toml serve
+Restart=always
+RestartSec=10
+DynamicUser=yes
+StateDirectory=sms2telegram
+ConfigurationDirectory=sms2telegram
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

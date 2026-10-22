@@ -1,0 +1,20 @@
+# Every key can also be set from the environment: SMS2TELEGRAM_ + the path in
+# upper case with "__" between levels, e.g. SMS2TELEGRAM_TELEGRAM__TOKEN.
+
+[modem]
+# The dongle's web UI. Unisoc MiFi dongles hand out 192.168.0.0/24 over RNDIS.
+url = "http://192.168.0.1"
+timeout = "10s"
+
+[telegram]
+api_url = "https://api.telegram.org"
+# From @BotFather.
+token = ""
+# Your user id (message the bot, then read getUpdates) or a group id.
+chat_id = ""
+timeout = "30s"
+
+[forwarder]
+interval = "30s"
+# Keys of the messages already delivered, so a restart sends nothing twice.
+state_file = "/var/lib/sms2telegram/state.json"

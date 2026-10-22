@@ -1,0 +1,31 @@
+---
+version: "2"
+linters:
+  default: all
+  disable:
+    - depguard # noisy without a curated allowlist; revisit when one exists
+    - gomodguard # same reasoning as depguard
+    - tagliatelle # struct tags follow the modem's and Telegram's JSON naming
+    - varnamelen # short receiver / loop names are idiomatic Go
+    - wsl # whitespace cop produces too much churn for too little signal
+    - wsl_v5 # the same whitespace cop under its v5 name
+    - noinlineerr # `if err := f(); err != nil` is idiomatic Go and keeps err scoped
+    # deprecated in v2.13.0; exhaustruct_v5 replaces it and the two
+    # double-report every literal when both are on.
+    - exhaustruct
+  settings:
+    revive:
+      rules:
+        - name: exported
+          arguments: ["checkPrivateReceivers", "disableStutteringCheck"]
+        - name: package-comments
+        - name: var-naming
+    wrapcheck:
+      ignore-sigs:
+        - .Errorf(
+        - errors.New(
+        - errors.Unwrap(
+        - errors.Join(
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
