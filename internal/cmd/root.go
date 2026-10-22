@@ -45,6 +45,7 @@ func run() error {
 		Commands: []*cli.Command{
 			serveCommand(),
 			listCommand(),
+			sendCommand(),
 		},
 	}
 

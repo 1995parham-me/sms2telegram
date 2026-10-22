@@ -46,3 +46,10 @@ type Store interface {
 	Seen(key string) bool
 	MarkSeen(key string) error
 }
+
+// Outbox sends messages from the modem's SIM.
+type Outbox interface {
+	// Send submits text to the number to and waits until the modem reports
+	// whether it went out.
+	Send(ctx context.Context, to, text string) error
+}

@@ -33,20 +33,25 @@ type Client struct {
 
 // New returns a client for the modem web UI at baseURL.
 func New(baseURL string, timeout time.Duration) (*Client, error) {
-	base, err := url.Parse(baseURL)
-	if err != nil {
-		return nil, fmt.Errorf("parsing modem url %q: %w", baseURL, err)
-	}
-
 	//nolint:forcetypeassert // DefaultTransport is always *http.Transport.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	// The modem is on a local link; an HTTP proxy from the environment can only get in the way.
 	transport.Proxy = nil
 
-	return &Client{
-		base: base,
-		http: &http.Client{Transport: transport, Timeout: timeout}, //nolint:exhaustruct_v5 // only the set fields matter.
-	}, nil
+	client := &http.Client{Transport: transport, Timeout: timeout} //nolint:exhaustruct_v5 // only the set fields matter.
+
+	return NewWithClient(baseURL, client)
+}
+
+// NewWithClient is New with a caller-supplied HTTP client, for tests and
+// unusual transports.
+func NewWithClient(baseURL string, client *http.Client) (*Client, error) {
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing modem url %q: %w", baseURL, err)
+	}
+
+	return &Client{base: base, http: client}, nil
 }
 
 type page struct {

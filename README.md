@@ -1,6 +1,6 @@
 # sms2telegram
 
-Forward the SMS inbox of a 4G USB dongle to a Telegram chat.
+Forward the SMS inbox of a 4G USB dongle to a Telegram chat, and send SMS from it.
 
 Plug a SIM into a cheap MiFi dongle, plug the dongle into a Linux box, and every SMS that lands on the SIM (bank codes, operator notices, one-time passwords) shows up in Telegram a few seconds later.
 
@@ -41,7 +41,10 @@ Telegram calls honour `HTTPS_PROXY`, for networks where `api.telegram.org` is fi
 sms2telegram list                  # print the inbox, send nothing
 sms2telegram serve --once          # one pass
 sms2telegram -c config.toml serve  # poll forever
+sms2telegram send --to +989121234567 "on my way"  # send an SMS from the SIM
 ```
+
+`send` waits up to `--timeout` (1 minute) for the modem to confirm the message went out. The DWR-910M answers "failed" for a moment right after every submit, so only a "sent" ends the wait early; a real failure shows up as a timeout. The dongle keeps no copy of sent messages.
 
 A hardened systemd unit is in [`deployments/sms2telegram.service`](deployments/sms2telegram.service): put the binary in `/usr/local/bin` and the config in `/etc/sms2telegram/config.toml` (root, `0600`; systemd passes it to the service as a credential), then `systemctl enable --now sms2telegram`.
 
