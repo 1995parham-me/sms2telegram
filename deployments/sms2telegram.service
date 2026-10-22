@@ -5,12 +5,15 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/sms2telegram --config /etc/sms2telegram/config.toml serve
+# The config holds the bot token: keep it root-only (0600) and hand it to the
+# dynamic user as a credential.
+LoadCredential=config.toml:/etc/sms2telegram/config.toml
+ExecStart=/usr/local/bin/sms2telegram --config %d/config.toml serve
+Environment=SMS2TELEGRAM_FORWARDER__STATE_FILE=/var/lib/sms2telegram/state.json
 Restart=always
 RestartSec=10
 DynamicUser=yes
 StateDirectory=sms2telegram
-ConfigurationDirectory=sms2telegram
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

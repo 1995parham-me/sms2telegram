@@ -43,7 +43,7 @@ sms2telegram serve --once          # one pass
 sms2telegram -c config.toml serve  # poll forever
 ```
 
-A hardened systemd unit is in [`deployments/sms2telegram.service`](deployments/sms2telegram.service): put the binary in `/usr/local/bin`, the config in `/etc/sms2telegram/config.toml`, and `systemctl enable --now sms2telegram`.
+A hardened systemd unit is in [`deployments/sms2telegram.service`](deployments/sms2telegram.service): put the binary in `/usr/local/bin` and the config in `/etc/sms2telegram/config.toml` (root, `0600`; systemd passes it to the service as a credential), then `systemctl enable --now sms2telegram`.
 
 ## A warning about the dongle's API
 
