@@ -75,7 +75,10 @@ func (c *Client) Send(ctx context.Context, to, text string) error {
 // firmware answers as a number or a string depending on the endpoint.
 func (c *Client) state(ctx context.Context, endpoint string, query url.Values) (string, error) {
 	u := c.base.JoinPath(endpoint)
-	u.RawQuery = query.Encode()
+	// The firmware decodes %XX but not the form encoding's "+" for a space, so
+	// a message sent with Encode as-is arrives as "on+my+way". A literal "+"
+	// is already %2B by now, so this cannot touch one.
+	u.RawQuery = strings.ReplaceAll(query.Encode(), "+", "%20")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {

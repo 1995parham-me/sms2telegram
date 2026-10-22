@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -24,6 +25,10 @@ func modem(t *testing.T, queued string, results ...string) (*mifi.Client, *atomi
 	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/PostMessageList":
+			if strings.Contains(r.URL.RawQuery, "+") {
+				t.Errorf("query %q has a '+', which the modem would keep as a literal '+'", r.URL.RawQuery)
+			}
+
 			submitted.Store(r.URL.Query().Get("MessageList"))
 			_, _ = w.Write([]byte(`{"state":` + queued + `}`))
 		case "/messageback":
@@ -54,7 +59,7 @@ func TestSendWaitsPastEarlyFailure(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 		defer cancel()
 
-		if err := c.Send(ctx, "+989121234567", "سلام <3"); err != nil {
+		if err := c.Send(ctx, "+989121234567", "سلام <3 a+b"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -65,7 +70,7 @@ func TestSendWaitsPastEarlyFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if msg["pnumber"] != "+989121234567" || msg["content"] != "سلام <3" {
+		if msg["pnumber"] != "+989121234567" || msg["content"] != "سلام <3 a+b" {
 			t.Fatalf("unexpected submit: %v", msg)
 		}
 	})
