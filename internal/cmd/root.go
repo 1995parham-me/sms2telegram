@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,10 @@ import (
 
 	"github.com/1995parham-me/sms2telegram/internal/infra/config"
 )
+
+// version is the release tag, set by GoReleaser through -ldflags -X; builds
+// from source (go install, go build) report their VCS revision instead.
+var version string
 
 // Execute runs the CLI and exits non-zero on error.
 func Execute() {
@@ -32,7 +37,7 @@ func run() error {
 	root := &cli.Command{ //nolint:exhaustruct_v5 // only the set fields matter.
 		Name:    "sms2telegram",
 		Usage:   "forward the SMS inbox of a 4G USB dongle to Telegram",
-		Version: versioninfo.Short(),
+		Version: cmp.Or(version, versioninfo.Short()),
 		Flags: []cli.Flag{
 			&cli.StringFlag{ //nolint:exhaustruct_v5 // only the set fields matter.
 				Name:    "config",

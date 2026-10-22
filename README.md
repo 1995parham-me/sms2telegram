@@ -20,11 +20,17 @@ If the dongle stays unreachable for `alert_after` (10 minutes by default), a Tel
 
 ## Install
 
+Static `linux/amd64`, `arm64` and `armv7` binaries are on the [releases page](https://github.com/1995parham-me/sms2telegram/releases), each with SLSA build provenance:
+
+```bash
+gh attestation verify sms2telegram_*_linux_amd64.tar.gz --repo 1995parham-me/sms2telegram
+```
+
+or build from source (Go 1.27):
+
 ```bash
 go install github.com/1995parham-me/sms2telegram/cmd/sms2telegram@latest
 ```
-
-or take a static `linux/amd64`, `arm64` or `arm` build from the CI artifacts.
 
 ## Configure
 
@@ -59,7 +65,10 @@ On this firmware some `GET /jsonp_<name>` endpoints are actions, not reads: `jso
 ```bash
 just test
 just lint
+just snapshot   # a local release build into dist/
 ```
+
+Releases are cut by pushing a `v*` tag; GoReleaser builds them in CI. CodeQL scans every push and runs weekly, and Dependabot groups module and action updates into one PR each.
 
 ## License
 
