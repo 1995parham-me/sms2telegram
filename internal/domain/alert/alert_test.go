@@ -13,7 +13,11 @@ const (
 )
 
 func firing(summary string) alert.Alert {
-	return alert.Alert{Status: statusFiring, Labels: map[string]string{}, Annotations: map[string]string{"summary": summary}}
+	return alert.Alert{
+		Status:      statusFiring,
+		Labels:      map[string]string{},
+		Annotations: map[string]string{"summary": summary},
+	}
 }
 
 func TestText(t *testing.T) {
