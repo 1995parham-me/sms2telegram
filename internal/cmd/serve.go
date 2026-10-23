@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"time"
 
 	"github.com/urfave/cli/v3"
@@ -15,9 +17,16 @@ import (
 	"github.com/1995parham-me/sms2telegram/internal/infra/mifi"
 	"github.com/1995parham-me/sms2telegram/internal/infra/state"
 	"github.com/1995parham-me/sms2telegram/internal/infra/telegram"
+	"github.com/1995parham-me/sms2telegram/internal/infra/webhook"
 )
 
-var errMissingTelegram = errors.New("telegram.token and telegram.chat_id are required")
+var (
+	errMissingTelegram = errors.New("telegram.token and telegram.chat_id are required")
+	errWebhookConfig   = errors.New("webhook.listen needs webhook.token and at least one number in webhook.to")
+)
+
+// webhookHeaderTimeout bounds how long a client may take to send its headers.
+const webhookHeaderTimeout = 10 * time.Second
 
 func serveCommand() *cli.Command {
 	return &cli.Command{ //nolint:exhaustruct_v5 // only the set fields matter.
@@ -39,7 +48,7 @@ func serve(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	fwd, bot, err := build(cfg)
+	fwd, bot, modem, err := build(cfg)
 	if err != nil {
 		return err
 	}
@@ -50,7 +59,51 @@ func serve(ctx context.Context, cmd *cli.Command) error {
 		return pass(ctx, fwd)
 	}
 
+	if cfg.Webhook.Listen != "" {
+		stop, err := listen(ctx, cfg.Webhook, modem)
+		if err != nil {
+			return err
+		}
+		defer stop()
+	}
+
 	return loop(ctx, cfg, fwd, bot)
+}
+
+// listen serves the Alertmanager webhook until the returned stop is called.
+// It binds before returning, so a taken address fails the start.
+func listen(ctx context.Context, cfg config.Webhook, modem *mifi.Client) (func(), error) {
+	if cfg.Token == "" || len(cfg.To) == 0 {
+		return nil, errWebhookConfig
+	}
+
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.Listen) //nolint:exhaustruct_v5 // the zero value is the default dialer.
+	if err != nil {
+		return nil, fmt.Errorf("webhook.listen: %w", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle(webhook.Path, webhook.New(modem, cfg.To, cfg.Token, cfg.Timeout))
+
+	srv := &http.Server{ //nolint:exhaustruct_v5 // only the set fields matter.
+		Handler:           mux,
+		ReadHeaderTimeout: webhookHeaderTimeout,
+	}
+
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.ErrorContext(ctx, "webhook stopped", "error", err)
+		}
+	}()
+
+	slog.InfoContext(ctx, "serving the alert webhook", "address", ln.Addr().String(), "path", webhook.Path, "numbers", len(cfg.To))
+
+	return func() {
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.Timeout)
+		defer cancel()
+
+		_ = srv.Shutdown(shutdownCtx)
+	}, nil
 }
 
 func loop(ctx context.Context, cfg config.Config, fwd *forwarder.Forwarder, bot *telegram.Bot) error {
@@ -80,24 +133,24 @@ func loop(ctx context.Context, cfg config.Config, fwd *forwarder.Forwarder, bot 
 	}
 }
 
-func build(cfg config.Config) (*forwarder.Forwarder, *telegram.Bot, error) {
+func build(cfg config.Config) (*forwarder.Forwarder, *telegram.Bot, *mifi.Client, error) {
 	if cfg.Telegram.Token == "" || cfg.Telegram.ChatID == "" {
-		return nil, nil, errMissingTelegram
+		return nil, nil, nil, errMissingTelegram
 	}
 
 	modem, err := mifi.New(cfg.Modem.URL, cfg.Modem.Timeout)
 	if err != nil {
-		return nil, nil, fmt.Errorf("configuring modem: %w", err)
+		return nil, nil, nil, fmt.Errorf("configuring modem: %w", err)
 	}
 
 	store, err := state.Open(cfg.Forwarder.StateFile)
 	if err != nil {
-		return nil, nil, fmt.Errorf("opening state: %w", err)
+		return nil, nil, nil, fmt.Errorf("opening state: %w", err)
 	}
 
 	bot := telegram.New(cfg.Telegram.APIURL, cfg.Telegram.Token, cfg.Telegram.ChatID, cfg.Telegram.Timeout)
 
-	return forwarder.New(modem, bot, store), bot, nil
+	return forwarder.New(modem, bot, store), bot, modem, nil
 }
 
 func alert(ctx context.Context, bot *telegram.Bot, tracker *health.Tracker, passErr error) {

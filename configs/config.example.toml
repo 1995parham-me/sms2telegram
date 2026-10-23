@@ -21,3 +21,14 @@ interval = "30s"
 alert_after = "10m"
 # Keys of the messages already delivered, so a restart sends nothing twice.
 state_file = "/var/lib/sms2telegram/state.json"
+
+[webhook]
+# Receive Alertmanager notifications here and text each one from the SIM, a
+# fallback that needs no internet. Empty (the default) turns it off.
+# listen = "192.168.1.10:9097"
+# Alertmanager sends it with http_config.authorization (type Bearer).
+token = ""
+# Every number gets every notification, one 160-character SMS each.
+to = []
+# How long to wait for the modem to confirm each SMS.
+timeout = "1m"

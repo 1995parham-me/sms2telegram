@@ -26,6 +26,7 @@ type Config struct {
 	Modem     Modem     `json:"modem"     koanf:"modem"`
 	Telegram  Telegram  `json:"telegram"  koanf:"telegram"`
 	Forwarder Forwarder `json:"forwarder" koanf:"forwarder"`
+	Webhook   Webhook   `json:"webhook"   koanf:"webhook"`
 }
 
 // Modem locates the dongle's web UI.
@@ -51,12 +52,23 @@ type Forwarder struct {
 	StateFile  string        `json:"state_file"  koanf:"state_file"`
 }
 
+// Webhook receives Alertmanager notifications on Listen and texts each one to
+// the numbers in To. Requests must carry "Authorization: Bearer <Token>". An
+// empty Listen turns it off.
+type Webhook struct {
+	Listen  string        `json:"listen"  koanf:"listen"`
+	Token   string        `json:"-"       koanf:"token"`
+	To      []string      `json:"to"      koanf:"to"`
+	Timeout time.Duration `json:"timeout" koanf:"timeout"`
+}
+
 const (
 	modemTimeout     = 10 * time.Second
 	telegramTimeout  = 30 * time.Second
 	forwardInterval  = 30 * time.Second
 	alertAfter       = 10 * time.Minute
 	defaultStateFile = "sms2telegram-state.json"
+	smsTimeout       = time.Minute
 )
 
 // Default returns the configuration used when nothing overrides it.
@@ -70,6 +82,7 @@ func Default() Config {
 			Timeout: telegramTimeout,
 		},
 		Forwarder: Forwarder{Interval: forwardInterval, AlertAfter: alertAfter, StateFile: defaultStateFile},
+		Webhook:   Webhook{Listen: "", Token: "", To: nil, Timeout: smsTimeout},
 	}
 }
 
