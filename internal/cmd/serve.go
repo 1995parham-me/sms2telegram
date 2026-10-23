@@ -77,7 +77,8 @@ func listen(ctx context.Context, cfg config.Webhook, modem *mifi.Client) (func()
 		return nil, errWebhookConfig
 	}
 
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.Listen) //nolint:exhaustruct_v5 // the zero value is the default dialer.
+	//nolint:exhaustruct_v5 // the zero ListenConfig is the default.
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("webhook.listen: %w", err)
 	}
@@ -96,7 +97,8 @@ func listen(ctx context.Context, cfg config.Webhook, modem *mifi.Client) (func()
 		}
 	}()
 
-	slog.InfoContext(ctx, "serving the alert webhook", "address", ln.Addr().String(), "path", webhook.Path, "numbers", len(cfg.To))
+	slog.InfoContext(ctx, "serving the alert webhook",
+		"address", ln.Addr().String(), "path", webhook.Path, "numbers", len(cfg.To))
 
 	return func() {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.Timeout)

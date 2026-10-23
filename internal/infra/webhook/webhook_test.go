@@ -45,6 +45,10 @@ func (o *outbox) Send(_ context.Context, to, text string) error {
 	return nil
 }
 
+func newOutbox(fail bool) *outbox {
+	return &outbox{mu: sync.Mutex{}, sent: nil, fail: fail, inFlight: 0, maxSeen: 0}
+}
+
 const body = `{"status":"firing","commonLabels":{"alertname":"JoghdDown"},
 "alerts":[{"status":"firing","labels":{"alertname":"JoghdDown"},"annotations":{"summary":"Joghd is not running"}}]}`
 
@@ -65,14 +69,17 @@ func post(t *testing.T, h http.Handler, token, payload string) *httptest.Respons
 func TestSendsToEveryNumber(t *testing.T) {
 	t.Parallel()
 
-	o := &outbox{}
+	o := newOutbox(false)
 	h := webhook.New(o, []string{"+989121111111", "+989122222222"}, "s3cret", time.Second)
 
 	if rec := post(t, h, "s3cret", body); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body)
 	}
 
-	want := []string{"+989121111111: FIRING JoghdDown: Joghd is not running", "+989122222222: FIRING JoghdDown: Joghd is not running"}
+	want := []string{
+		"+989121111111: FIRING JoghdDown: Joghd is not running",
+		"+989122222222: FIRING JoghdDown: Joghd is not running",
+	}
 	if strings.Join(o.sent, "|") != strings.Join(want, "|") {
 		t.Errorf("sent %q, want %q", o.sent, want)
 	}
@@ -96,7 +103,7 @@ func TestRejects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			o := &outbox{}
+			o := newOutbox(false)
 			h := webhook.New(o, []string{"+989121111111"}, "s3cret", time.Second)
 
 			if rec := post(t, h, tc.token, tc.payload); rec.Code != tc.want {
@@ -113,7 +120,7 @@ func TestRejects(t *testing.T) {
 func TestFailedSendAsksForARetry(t *testing.T) {
 	t.Parallel()
 
-	h := webhook.New(&outbox{fail: true}, []string{"+989121111111"}, "s3cret", time.Second)
+	h := webhook.New(newOutbox(true), []string{"+989121111111"}, "s3cret", time.Second)
 
 	if rec := post(t, h, "s3cret", body); rec.Code != http.StatusBadGateway {
 		t.Errorf("status = %d, want %d so Alertmanager retries", rec.Code, http.StatusBadGateway)
@@ -123,7 +130,7 @@ func TestFailedSendAsksForARetry(t *testing.T) {
 func TestSendsOneAtATime(t *testing.T) {
 	t.Parallel()
 
-	o := &outbox{}
+	o := newOutbox(false)
 	h := webhook.New(o, []string{"+989121111111"}, "s3cret", time.Second)
 
 	var wg sync.WaitGroup
