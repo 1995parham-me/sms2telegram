@@ -152,7 +152,7 @@ func build(cfg config.Config) (*forwarder.Forwarder, *telegram.Bot, *mifi.Client
 
 	bot := telegram.New(cfg.Telegram.APIURL, cfg.Telegram.Token, cfg.Telegram.ChatID, cfg.Telegram.Timeout)
 
-	return forwarder.New(modem, bot, store), bot, modem, nil
+	return forwarder.New(modem, bot, store, cfg.Forwarder.DeleteForwarded), bot, modem, nil
 }
 
 func alert(ctx context.Context, bot *telegram.Bot, tracker *health.Tracker, passErr error) {

@@ -21,6 +21,9 @@ interval = "30s"
 alert_after = "10m"
 # Keys of the messages already delivered, so a restart sends nothing twice.
 state_file = "/var/lib/sms2telegram/state.json"
+# Delete messages from the modem once they are delivered, keeping the newest
+# page (6 messages). A full inbox drops new SMS, and every pass reads less.
+delete_forwarded = false
 
 [webhook]
 # Receive Alertmanager notifications here and text each one from the SIM, a

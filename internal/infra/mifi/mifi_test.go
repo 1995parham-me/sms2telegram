@@ -65,3 +65,61 @@ func TestListWalksPages(t *testing.T) {
 		t.Fatalf("unexpected messages: %+v", msgs)
 	}
 }
+
+func TestPageDecodesEmojiAndPositions(t *testing.T) {
+	t.Parallel()
+
+	// "🔴 Code" as the firmware sends it: U+1F534 as two CESU-8 surrogate halves.
+	body := "{\"curPage\":1,\"totalPage\":3,\"data\":[" +
+		"{\"smsContent\":\"\xed\xa0\xbd\xed\xb4\xb4 Code\",\"phoneNumber\":\"98100\",\"smsDate\":\"d\",\"messageid\":7}]}"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c, err := mifi.New(srv.URL, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := c.Page(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if p.Total != 3 || len(p.Messages) != 1 || p.Messages[0].Content != "🔴 Code" || p.Messages[0].Position != 7 {
+		t.Fatalf("unexpected page: %+v", p)
+	}
+}
+
+func TestDeleteSendsCompactList(t *testing.T) {
+	t.Parallel()
+
+	var got string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/DeleteList" {
+			http.NotFound(w, r)
+
+			return
+		}
+
+		got = r.URL.Query().Get("deleList")
+		_, _ = w.Write([]byte(`{"state":1}`))
+	}))
+	defer srv.Close()
+
+	c, err := mifi.New(srv.URL, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.Delete(t.Context(), 16, []int{90, 91}); err != nil {
+		t.Fatal(err)
+	}
+
+	if want := `[{"id":90,"curpage":16},{"id":91,"curpage":16}]`; got != want {
+		t.Fatalf("deleList = %s, want %s", got, want)
+	}
+}

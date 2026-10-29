@@ -12,9 +12,11 @@ The modem side is one small package (`internal/infra/mifi`) behind the `sms.Inbo
 
 ## How it works
 
-Every `interval` it reads every page of the inbox, sorts the messages oldest first and sends each one it has not sent before. A message is recorded in the state file only after Telegram accepts it, so a failed send is retried on the next pass and nothing is lost or reordered. Messages are identified by sender, date and text, because the modem numbers its inbox by position and those numbers shift whenever a message arrives.
+Every `interval` it reads the inbox newest first, stopping at the first page with nothing new on it (so a pass is usually one request, however full the inbox is), sorts the new messages oldest first and sends each one. A message is recorded in the state file only after Telegram accepts it, so a failed send is retried on the next pass and nothing is lost or reordered. Messages are identified by sender, date and text, because the modem numbers its inbox by position and those numbers shift whenever a message arrives.
 
-Messages are left on the SIM.
+Messages are left on the modem unless `forwarder.delete_forwarded` is on. A full modem silently stops storing new SMS (a DWR-910M stopped at 94 messages), so turn it on for anything that runs unattended: after a pass that delivered everything, the delivered messages beyond the newest page (6) are deleted, oldest page first. The modem addresses messages by position, and an arrival shifts every position by one, so each page is read again right before its delete and the newest page is never touched.
+
+The DWR-910M sends emoji as CESU-8 (each UTF-16 surrogate half encoded on its own), which is invalid UTF-8; they are decoded back before anything else sees the text.
 
 If the dongle stays unreachable for `alert_after` (10 minutes by default), a Telegram alert says SMS are not being received, and another says when it is back. Shorter blips, like a dongle reboot, are not reported. A Telegram outage cannot be reported over Telegram, so delivery failures are only logged (and retried).
 

@@ -15,6 +15,10 @@ type SMS struct {
 	Date string `json:"date"`
 	// Content is the decoded message text.
 	Content string `json:"content"`
+	// Position is where the modem holds the message right now, 0 being the
+	// newest. It changes with every arrival, so it only addresses a delete
+	// made straight after the read.
+	Position int `json:"-"`
 }
 
 // Key identifies a message across polls. Modems number their inbox by
@@ -30,10 +34,20 @@ func (s SMS) Key() string {
 	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
-// Inbox reads the messages stored on a modem.
+// Page is one page of the inbox.
+type Page struct {
+	// Messages are newest first.
+	Messages []SMS
+	// Total is how many pages the inbox has.
+	Total int
+}
+
+// Inbox reads and deletes the messages stored on a modem.
 type Inbox interface {
-	// List returns every message in the inbox, in any order.
-	List(ctx context.Context) ([]SMS, error)
+	// Page returns page index of the inbox, counting from 1, newest first.
+	Page(ctx context.Context, index int) (Page, error)
+	// Delete removes the messages at positions, all read from page index.
+	Delete(ctx context.Context, index int, positions []int) error
 }
 
 // Notifier delivers a message to its destination.

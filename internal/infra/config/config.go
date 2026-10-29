@@ -45,11 +45,13 @@ type Telegram struct {
 
 // Forwarder controls polling, outage alerts and where delivered keys are
 // remembered. AlertAfter is how long the modem may stay unreachable before a
-// Telegram alert goes out; zero disables alerts.
+// Telegram alert goes out; zero disables alerts. DeleteForwarded deletes
+// delivered messages from the modem, keeping the newest page.
 type Forwarder struct {
-	Interval   time.Duration `json:"interval"    koanf:"interval"`
-	AlertAfter time.Duration `json:"alert_after" koanf:"alert_after"`
-	StateFile  string        `json:"state_file"  koanf:"state_file"`
+	Interval        time.Duration `json:"interval"         koanf:"interval"`
+	AlertAfter      time.Duration `json:"alert_after"      koanf:"alert_after"`
+	StateFile       string        `json:"state_file"       koanf:"state_file"`
+	DeleteForwarded bool          `json:"delete_forwarded" koanf:"delete_forwarded"`
 }
 
 // Webhook receives Alertmanager notifications on Listen and texts each one to
@@ -81,8 +83,13 @@ func Default() Config {
 			ChatID:  "",
 			Timeout: telegramTimeout,
 		},
-		Forwarder: Forwarder{Interval: forwardInterval, AlertAfter: alertAfter, StateFile: defaultStateFile},
-		Webhook:   Webhook{Listen: "", Token: "", To: nil, Timeout: smsTimeout},
+		Forwarder: Forwarder{
+			Interval:        forwardInterval,
+			AlertAfter:      alertAfter,
+			StateFile:       defaultStateFile,
+			DeleteForwarded: false,
+		},
+		Webhook: Webhook{Listen: "", Token: "", To: nil, Timeout: smsTimeout},
 	}
 }
 

@@ -16,7 +16,7 @@ import (
 func TestFormatEscapes(t *testing.T) {
 	t.Parallel()
 
-	got := telegram.Format(sms.SMS{Sender: "", Date: "2026-10-22 12:27:20", Content: "a <b> & c"})
+	got := telegram.Format(sms.SMS{Sender: "", Date: "2026-10-22 12:27:20", Content: "a <b> & c", Position: 0})
 
 	if !strings.Contains(got, "unknown sender") || !strings.Contains(got, "a &lt;b&gt; &amp; c") {
 		t.Fatalf("unexpected format: %q", got)
@@ -42,7 +42,7 @@ func TestNotify(t *testing.T) {
 
 	bot := telegram.New(srv.URL, "TOKEN", "42", time.Second)
 
-	if err := bot.Notify(t.Context(), sms.SMS{Sender: "98100", Date: "d", Content: "hi"}); err != nil {
+	if err := bot.Notify(t.Context(), sms.SMS{Sender: "98100", Date: "d", Content: "hi", Position: 0}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -62,7 +62,7 @@ func TestNotifyReportsAPIError(t *testing.T) {
 
 	bot := telegram.New(srv.URL, "TOKEN", "42", time.Second)
 
-	err := bot.Notify(t.Context(), sms.SMS{Sender: "", Date: "", Content: ""})
+	err := bot.Notify(t.Context(), sms.SMS{Sender: "", Date: "", Content: "", Position: 0})
 	if !errors.Is(err, telegram.ErrAPI) || !strings.Contains(err.Error(), "chat not found") {
 		t.Fatalf("got %v, want the API description", err)
 	}
