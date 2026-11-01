@@ -5,7 +5,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 )
+
+// partMissing is what Unisoc MiFi firmware shows in place of a part of a
+// multipart SMS that has not arrived yet. The message is listed as soon as
+// its first part lands and is completed in place when the rest follow.
+const partMissing = "(......)"
 
 // SMS is one message as read from the modem inbox.
 type SMS struct {
@@ -23,10 +29,30 @@ type SMS struct {
 
 // Key identifies a message across polls. Modems number their inbox by
 // position, so the index shifts whenever a message arrives or is deleted;
-// the content itself is the only stable identity.
+// the receive time and the content are the only stable identity.
+//
+// The sender is left out on purpose. The DWR-910M reports a different
+// sender for the same stored message over time (a bank SMS listed as from
+// "+9810000010111001" came back as "PARSIANBANK" after the dongle
+// rebooted), and every such change used to forward the message again.
 func (s SMS) Key() string {
+	return hash(s.Date, s.Content)
+}
+
+// LegacyKey is the key releases before 0.4.0 stored, sender included, so a
+// state file written by them still marks its messages as delivered.
+func (s SMS) LegacyKey() string {
+	return hash(s.Sender, s.Date, s.Content)
+}
+
+// Incomplete reports a multipart message that is still missing a part.
+func (s SMS) Incomplete() bool {
+	return strings.Contains(s.Content, partMissing)
+}
+
+func hash(parts ...string) string {
 	h := sha256.New()
-	for _, part := range []string{s.Sender, s.Date, s.Content} {
+	for _, part := range parts {
 		h.Write([]byte(part))
 		h.Write([]byte{0})
 	}

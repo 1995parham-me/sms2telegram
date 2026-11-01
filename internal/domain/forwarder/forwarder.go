@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
+	"time"
 
 	"github.com/1995parham-me/sms2telegram/internal/domain/sms"
 )
@@ -14,19 +16,37 @@ import (
 // opposed to a failed delivery.
 var ErrInbox = errors.New("reading inbox")
 
+// DefaultHold is how long a multipart message missing a part waits for the
+// rest before it is forwarded as it stands. Parts usually follow within
+// seconds; a part the network never delivers must not hold the message back
+// for good.
+const DefaultHold = 5 * time.Minute
+
 // Forwarder delivers every message it has not delivered before.
 type Forwarder struct {
 	inbox    sms.Inbox
 	notifier sms.Notifier
 	store    sms.Store
 	prune    bool
+	hold     time.Duration
+	now      func() time.Time
+	// waiting maps an incomplete message's key to when it was first read.
+	waiting map[string]time.Time
 }
 
 // New builds a Forwarder over the given ports. With prune, every pass that
 // delivers everything also deletes the delivered messages beyond the first
 // page, so the inbox never fills up.
 func New(inbox sms.Inbox, notifier sms.Notifier, store sms.Store, prune bool) *Forwarder {
-	return &Forwarder{inbox: inbox, notifier: notifier, store: store, prune: prune}
+	return &Forwarder{
+		inbox:    inbox,
+		notifier: notifier,
+		store:    store,
+		prune:    prune,
+		hold:     DefaultHold,
+		now:      time.Now,
+		waiting:  map[string]time.Time{},
+	}
 }
 
 // Forward runs one pass and returns how many messages it delivered.
@@ -66,13 +86,47 @@ func (f *Forwarder) Forward(ctx context.Context) (int, error) {
 	return sent, nil
 }
 
-// deliver sends msgs in order, recording each one as soon as it is delivered.
+// seen reports whether msg was delivered, under either key format.
+func (f *Forwarder) seen(msg sms.SMS) bool {
+	return f.store.Seen(msg.Key()) || f.store.Seen(msg.LegacyKey())
+}
+
+// holding reports whether msg, a multipart message still missing a part,
+// should wait for the rest. The complete message has different content and
+// so a different key: holding the partial one is what keeps both from being
+// forwarded.
+func (f *Forwarder) holding(msg sms.SMS) bool {
+	key := msg.Key()
+
+	first, ok := f.waiting[key]
+	if !ok {
+		first = f.now()
+		f.waiting[key] = first
+	}
+
+	return f.now().Sub(first) < f.hold
+}
+
+// deliver sends msgs in order, recording each one as soon as it is
+// delivered. A multipart message missing a part is skipped until the part
+// arrives or it has waited out the hold.
 func (f *Forwarder) deliver(ctx context.Context, msgs []sms.SMS) (int, error) {
 	sent := 0
 
+	// Only messages still waiting in the inbox keep their place in the list.
+	keep := map[string]bool{}
 	for _, msg := range msgs {
-		key := msg.Key()
-		if f.store.Seen(key) {
+		keep[msg.Key()] = true
+	}
+
+	maps.DeleteFunc(f.waiting, func(key string, _ time.Time) bool { return !keep[key] })
+
+	for _, msg := range msgs {
+		if f.seen(msg) {
+			continue
+		}
+
+		if msg.Incomplete() && f.holding(msg) {
 			continue
 		}
 
@@ -80,7 +134,9 @@ func (f *Forwarder) deliver(ctx context.Context, msgs []sms.SMS) (int, error) {
 			return sent, fmt.Errorf("delivering message from %q at %s: %w", msg.Sender, msg.Date, err)
 		}
 
-		if err := f.store.MarkSeen(key); err != nil {
+		delete(f.waiting, msg.Key())
+
+		if err := f.store.MarkSeen(msg.Key()); err != nil {
 			return sent, fmt.Errorf("recording delivery: %w", err)
 		}
 
@@ -115,7 +171,7 @@ func (f *Forwarder) unseen(ctx context.Context) ([]sms.SMS, int, error) {
 		before := len(out)
 
 		for _, msg := range page.Messages {
-			if !f.store.Seen(msg.Key()) {
+			if !f.seen(msg) {
 				out = append(out, msg)
 			}
 		}
@@ -144,7 +200,7 @@ func (f *Forwarder) deleteDelivered(ctx context.Context, pages int) error {
 		var positions []int
 
 		for _, msg := range page.Messages {
-			if f.store.Seen(msg.Key()) {
+			if f.seen(msg) {
 				positions = append(positions, msg.Position)
 			}
 		}

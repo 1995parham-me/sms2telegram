@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/1995parham-me/sms2telegram/internal/domain/forwarder"
 	"github.com/1995parham-me/sms2telegram/internal/domain/sms"
@@ -200,10 +201,93 @@ func TestForwardKeepsUndeliveredOnFailure(t *testing.T) {
 func TestKeyDistinguishesFields(t *testing.T) {
 	t.Parallel()
 
-	a := sms.SMS{Sender: "ab", Date: "c", Content: "d", Position: 0}
-	b := sms.SMS{Sender: "a", Date: "bc", Content: "d", Position: 0}
+	a := sms.SMS{Sender: "x", Date: "ab", Content: "c", Position: 0}
+	b := sms.SMS{Sender: "x", Date: "a", Content: "bc", Position: 0}
 
 	if a.Key() == b.Key() {
 		t.Fatal("keys collide across field boundaries")
 	}
+}
+
+func TestKeyIgnoresSender(t *testing.T) {
+	t.Parallel()
+
+	a := sms.SMS{Sender: "989377070000", Date: "d", Content: "c", Position: 0}
+	b := sms.SMS{Sender: "PARSIANBANK", Date: "d", Content: "c", Position: 0}
+
+	if a.Key() != b.Key() || a.LegacyKey() == b.LegacyKey() {
+		t.Fatal("Key must ignore the sender and LegacyKey must not")
+	}
+}
+
+// A sender the modem reports differently on a later read is the same message.
+func TestForwardIgnoresSenderChange(t *testing.T) {
+	t.Parallel()
+
+	in := messages()
+	n := &notifier{got: nil, failAt: 0}
+	f := forwarder.New(in, n, store{}, false)
+
+	forward(t, f, in, 3, 2)
+
+	in.msgs[0].Sender = "PARSIANBANK"
+
+	forward(t, f, in, 0, 1)
+}
+
+// A state file from before 0.4.0 holds sender-keyed entries; they still count.
+func TestForwardHonoursLegacyKeys(t *testing.T) {
+	t.Parallel()
+
+	in := messages()
+	seen := store{}
+
+	for _, msg := range in.msgs {
+		seen[msg.LegacyKey()] = true
+	}
+
+	forward(t, forwarder.New(in, &notifier{got: nil, failAt: 0}, seen, false), in, 0, 1)
+}
+
+// A multipart message missing a part waits for it, and only the complete
+// message is forwarded.
+func TestForwardHoldsIncompleteMultipart(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 11, 1, 0, 48, 15, 0, time.UTC)
+	in := &inbox{reads: 0, msgs: nil}
+	n := &notifier{got: nil, failAt: 0}
+	f := forwarder.New(in, n, store{}, false)
+	f.SetClock(func() time.Time { return now })
+
+	in.arrive(sms.SMS{Sender: ".IRANCELL.", Date: "2026-11-01 00:48:15", Content: "first part(......)", Position: 0})
+	forward(t, f, in, 0, 1)
+
+	now = now.Add(time.Minute)
+	in.msgs[0].Content = "first part, second part"
+	forward(t, f, in, 1, 1)
+
+	if len(n.got) != 1 || n.got[0].Incomplete() {
+		t.Fatalf("delivered %+v, want only the complete message", n.got)
+	}
+}
+
+// A part that never comes does not hold the message back for good.
+func TestForwardReleasesIncompleteAfterHold(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 11, 1, 0, 48, 15, 0, time.UTC)
+	in := &inbox{reads: 0, msgs: nil}
+	f := forwarder.New(in, &notifier{got: nil, failAt: 0}, store{}, false)
+	f.SetClock(func() time.Time { return now })
+
+	in.arrive(sms.SMS{Sender: "98100", Date: "2026-11-01 00:48:15", Content: "lonely(......)", Position: 0})
+	forward(t, f, in, 0, 1)
+
+	// A complete message behind it is not held up.
+	in.arrive(sms.SMS{Sender: "98100", Date: "2026-11-01 00:49:00", Content: "Code: 1234", Position: 0})
+	forward(t, f, in, 1, 1)
+
+	now = now.Add(forwarder.DefaultHold)
+	forward(t, f, in, 1, 1)
 }
