@@ -13,6 +13,8 @@ import (
 	"github.com/1995parham-me/sms2telegram/internal/infra/telegram"
 )
 
+const htmlMode = "HTML"
+
 func TestFormatEscapes(t *testing.T) {
 	t.Parallel()
 
@@ -46,7 +48,7 @@ func TestNotify(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got["chat_id"] != "42" || got["parse_mode"] != "HTML" || !strings.Contains(got["text"], "hi") {
+	if got["chat_id"] != "42" || got["parse_mode"] != htmlMode || !strings.Contains(got["text"], "hi") {
 		t.Fatalf("unexpected request: %v", got)
 	}
 }
@@ -65,5 +67,40 @@ func TestNotifyReportsAPIError(t *testing.T) {
 	err := bot.Notify(t.Context(), sms.SMS{Sender: "", Date: "", Content: "", Position: 0})
 	if !errors.Is(err, telegram.ErrAPI) || !strings.Contains(err.Error(), "chat not found") {
 		t.Fatalf("got %v, want the API description", err)
+	}
+}
+
+// A message Telegram cannot parse as HTML still gets through, as plain text,
+// instead of holding back every SMS behind it.
+func TestNotifyFallsBackToPlainText(t *testing.T) {
+	t.Parallel()
+
+	var modes []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]string
+
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		modes = append(modes, got["parse_mode"])
+
+		if got["parse_mode"] == htmlMode {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"ok":false,"description":"Bad Request: can't parse entities"}`))
+
+			return
+		}
+
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	bot := telegram.New(srv.URL, "TOKEN", "42", time.Second)
+
+	if err := bot.Notify(t.Context(), sms.SMS{Sender: "98100", Date: "d", Content: "hi", Position: 0}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(modes) != 2 || modes[0] != htmlMode || modes[1] != "" {
+		t.Fatalf("parse modes tried: %q, want HTML then plain", modes)
 	}
 }

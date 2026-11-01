@@ -43,24 +43,30 @@ func New(apiURL, token, chatID string, timeout time.Duration) *Bot {
 
 // Format renders msg as Telegram HTML.
 func Format(msg sms.SMS) string {
-	sender := msg.Sender
-	if sender == "" {
-		sender = "unknown sender"
-	}
-
-	content := msg.Content
-	if utf8.RuneCountInString(content) > maxContent {
-		content = string([]rune(content)[:maxContent]) + "…"
-	}
-
 	return fmt.Sprintf("📩 <b>%s</b>\n<i>%s</i>\n\n%s",
-		html.EscapeString(sender), html.EscapeString(msg.Date), html.EscapeString(content))
+		html.EscapeString(senderOf(msg)), html.EscapeString(msg.Date), html.EscapeString(truncate(msg.Content)))
+}
+
+func senderOf(msg sms.SMS) string {
+	if msg.Sender == "" {
+		return "unknown sender"
+	}
+
+	return msg.Sender
+}
+
+func truncate(content string) string {
+	if utf8.RuneCountInString(content) > maxContent {
+		return string([]rune(content)[:maxContent]) + "…"
+	}
+
+	return content
 }
 
 type request struct {
 	ChatID    string `json:"chat_id"`
 	Text      string `json:"text"`
-	ParseMode string `json:"parse_mode"`
+	ParseMode string `json:"parse_mode,omitempty"`
 }
 
 type response struct {
@@ -69,17 +75,58 @@ type response struct {
 }
 
 // Notify implements sms.Notifier.
+//
+// A message Telegram refuses outright (400) would be retried on every pass
+// and hold back every SMS behind it, so it is sent again as plain text, and
+// failing that with its text escaped to ASCII: degraded, but delivered.
 func (b *Bot) Notify(ctx context.Context, msg sms.SMS) error {
-	return b.send(ctx, Format(msg))
+	err := b.send(ctx, Format(msg), "HTML")
+	if !badRequest(err) {
+		return err
+	}
+
+	err = b.send(ctx, Plain(msg), "")
+	if !badRequest(err) {
+		return err
+	}
+
+	return b.send(ctx, Escaped(msg), "")
 }
+
+// Plain renders msg without markup.
+func Plain(msg sms.SMS) string {
+	return fmt.Sprintf("📩 %s\n%s\n\n%s", senderOf(msg), msg.Date, truncate(msg.Content))
+}
+
+// Escaped renders msg in ASCII, every other character as a Go escape.
+func Escaped(msg sms.SMS) string {
+	return fmt.Sprintf("📩 %+q\n%+q\n\n%+q", senderOf(msg), msg.Date, truncate(msg.Content))
+}
+
+func badRequest(err error) bool {
+	var api apiError
+
+	return errors.As(err, &api) && api.status == http.StatusBadRequest
+}
+
+// apiError is a request the Bot API answered with ok=false.
+type apiError struct {
+	status int
+	text   string
+}
+
+func (e apiError) Error() string { return fmt.Sprintf("%v: %s", ErrAPI, e.text) }
+
+func (e apiError) Unwrap() error { return ErrAPI }
 
 // Text sends a plain-text message, such as an alert about the modem.
 func (b *Bot) Text(ctx context.Context, text string) error {
-	return b.send(ctx, html.EscapeString(text))
+	return b.send(ctx, text, "")
 }
 
-func (b *Bot) send(ctx context.Context, text string) error {
-	payload, err := json.Marshal(request{ChatID: b.chatID, Text: text, ParseMode: "HTML"})
+// send posts text; an empty mode sends it without markup.
+func (b *Bot) send(ctx context.Context, text, mode string) error {
+	payload, err := json.Marshal(request{ChatID: b.chatID, Text: text, ParseMode: mode})
 	if err != nil {
 		return fmt.Errorf("encoding telegram request: %w", err)
 	}
@@ -109,7 +156,7 @@ func (b *Bot) send(ctx context.Context, text string) error {
 	}
 
 	if !r.OK {
-		return fmt.Errorf("%w: %s: %s", ErrAPI, resp.Status, r.Description)
+		return apiError{status: resp.StatusCode, text: resp.Status + ": " + r.Description}
 	}
 
 	return nil

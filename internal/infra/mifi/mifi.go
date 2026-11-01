@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/1995parham-me/sms2telegram/internal/domain/sms"
@@ -29,6 +30,10 @@ var ErrStatus = errors.New("modem answered with an error status")
 type Client struct {
 	base *url.URL
 	http *http.Client
+
+	// sending serializes Send: the modem reports the result of "the last"
+	// message, so two sends in flight would read each other's result.
+	sending sync.Mutex
 }
 
 // New returns a client for the modem web UI at baseURL.
@@ -51,13 +56,14 @@ func NewWithClient(baseURL string, client *http.Client) (*Client, error) {
 		return nil, fmt.Errorf("parsing modem url %q: %w", baseURL, err)
 	}
 
-	return &Client{base: base, http: client}, nil
+	return &Client{base: base, http: client, sending: sync.Mutex{}}, nil
 }
 
 type page struct {
-	CurPage   int       `json:"curPage"`
-	TotalPage int       `json:"totalPage"`
-	Data      []message `json:"data"`
+	CurPage      int       `json:"curPage"`
+	TotalPage    int       `json:"totalPage"`
+	TotalRecords int       `json:"totalRecords"`
+	Data         []message `json:"data"`
 }
 
 type message struct {
@@ -114,7 +120,11 @@ func (c *Client) Page(ctx context.Context, index int) (sms.Page, error) {
 		return sms.Page{}, fmt.Errorf("decoding inbox page %d: %w", index, err)
 	}
 
-	out := sms.Page{Messages: make([]sms.SMS, 0, len(p.Data)), Total: min(p.TotalPage, maxPages)}
+	out := sms.Page{
+		Messages: make([]sms.SMS, 0, len(p.Data)),
+		Total:    min(p.TotalPage, maxPages),
+		Records:  p.TotalRecords,
+	}
 	for _, m := range p.Data {
 		out.Messages = append(out.Messages, sms.SMS{Sender: m.Phone, Date: m.Date, Content: m.Content, Position: m.Position})
 	}

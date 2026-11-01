@@ -35,3 +35,15 @@ token = ""
 to = []
 # How long to wait for the modem to confirm each SMS.
 timeout = "1m"
+
+[heartbeat]
+# The SIM's own number. serve texts it every interval and alerts on Telegram
+# when the message has not come back within wait: the only check that proves
+# SMS still arrive. Empty (the default) turns it off.
+number = ""
+interval = "12h"
+wait = "15m"
+# How long to wait for the modem to confirm the send.
+timeout = "2m"
+# Defaults to heartbeat.json beside state_file.
+file = ""

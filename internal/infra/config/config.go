@@ -27,6 +27,19 @@ type Config struct {
 	Telegram  Telegram  `json:"telegram"  koanf:"telegram"`
 	Forwarder Forwarder `json:"forwarder" koanf:"forwarder"`
 	Webhook   Webhook   `json:"webhook"   koanf:"webhook"`
+	Heartbeat Heartbeat `json:"heartbeat" koanf:"heartbeat"`
+}
+
+// Heartbeat texts Number, the SIM's own number, every Interval and alerts
+// when the message has not come back within Wait: the only check that proves
+// SMS still arrive. An empty Number turns it off. File keeps the schedule
+// across restarts; empty puts it beside the state file.
+type Heartbeat struct {
+	Number   string        `json:"number"   koanf:"number"`
+	Interval time.Duration `json:"interval" koanf:"interval"`
+	Wait     time.Duration `json:"wait"     koanf:"wait"`
+	Timeout  time.Duration `json:"timeout"  koanf:"timeout"`
+	File     string        `json:"file"     koanf:"file"`
 }
 
 // Modem locates the dongle's web UI.
@@ -71,6 +84,9 @@ const (
 	alertAfter       = 10 * time.Minute
 	defaultStateFile = "sms2telegram-state.json"
 	smsTimeout       = time.Minute
+	heartbeatEvery   = 12 * time.Hour
+	heartbeatWait    = 15 * time.Minute
+	heartbeatTimeout = 2 * time.Minute
 )
 
 // Default returns the configuration used when nothing overrides it.
@@ -90,6 +106,13 @@ func Default() Config {
 			DeleteForwarded: false,
 		},
 		Webhook: Webhook{Listen: "", Token: "", To: nil, Timeout: smsTimeout},
+		Heartbeat: Heartbeat{
+			Number:   "",
+			Interval: heartbeatEvery,
+			Wait:     heartbeatWait,
+			Timeout:  heartbeatTimeout,
+			File:     "",
+		},
 	}
 }
 

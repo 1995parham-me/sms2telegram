@@ -27,7 +27,7 @@ func (i *inbox) Page(_ context.Context, index int) (sms.Page, error) {
 	i.reads++
 
 	total := max(1, (len(i.msgs)+pageSize-1)/pageSize)
-	page := sms.Page{Messages: nil, Total: total}
+	page := sms.Page{Messages: nil, Total: total, Records: len(i.msgs)}
 
 	for pos := (index - 1) * pageSize; pos < min(index*pageSize, len(i.msgs)); pos++ {
 		msg := i.msgs[pos]

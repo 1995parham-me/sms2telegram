@@ -32,6 +32,11 @@ type Forwarder struct {
 	now      func() time.Time
 	// waiting maps an incomplete message's key to when it was first read.
 	waiting map[string]time.Time
+	// consume, when set, claims messages that are not for Telegram, such as
+	// heartbeats; they are recorded as delivered without being sent.
+	consume func(sms.SMS) bool
+	// records is how many messages the inbox held at the last read.
+	records int
 }
 
 // New builds a Forwarder over the given ports. With prune, every pass that
@@ -46,8 +51,16 @@ func New(inbox sms.Inbox, notifier sms.Notifier, store sms.Store, prune bool) *F
 		hold:     DefaultHold,
 		now:      time.Now,
 		waiting:  map[string]time.Time{},
+		consume:  nil,
+		records:  0,
 	}
 }
+
+// SetConsumer installs fn to claim messages that must not be forwarded.
+func (f *Forwarder) SetConsumer(fn func(sms.SMS) bool) { f.consume = fn }
+
+// Records returns how many messages the inbox held at the last read.
+func (f *Forwarder) Records() int { return f.records }
 
 // Forward runs one pass and returns how many messages it delivered.
 //
@@ -113,16 +126,18 @@ func (f *Forwarder) holding(msg sms.SMS) bool {
 func (f *Forwarder) deliver(ctx context.Context, msgs []sms.SMS) (int, error) {
 	sent := 0
 
-	// Only messages still waiting in the inbox keep their place in the list.
-	keep := map[string]bool{}
-	for _, msg := range msgs {
-		keep[msg.Key()] = true
-	}
-
-	maps.DeleteFunc(f.waiting, func(key string, _ time.Time) bool { return !keep[key] })
+	f.forgetGone(msgs)
 
 	for _, msg := range msgs {
 		if f.seen(msg) {
+			continue
+		}
+
+		if claimed, err := f.claim(msg); claimed || err != nil {
+			if err != nil {
+				return sent, err
+			}
+
 			continue
 		}
 
@@ -146,6 +161,30 @@ func (f *Forwarder) deliver(ctx context.Context, msgs []sms.SMS) (int, error) {
 	return sent, nil
 }
 
+// forgetGone drops the wait-list entries of messages no longer pending.
+func (f *Forwarder) forgetGone(msgs []sms.SMS) {
+	keep := map[string]bool{}
+	for _, msg := range msgs {
+		keep[msg.Key()] = true
+	}
+
+	maps.DeleteFunc(f.waiting, func(key string, _ time.Time) bool { return !keep[key] })
+}
+
+// claim hands msg to the consumer and, when it takes it, records it as
+// delivered without sending it.
+func (f *Forwarder) claim(msg sms.SMS) (bool, error) {
+	if f.consume == nil || !f.consume(msg) {
+		return false, nil
+	}
+
+	if err := f.store.MarkSeen(msg.Key()); err != nil {
+		return true, fmt.Errorf("recording delivery: %w", err)
+	}
+
+	return true, nil
+}
+
 // unseen reads the inbox newest first and returns the messages not delivered
 // yet, with the inbox's page count. Delivery goes oldest first, so a page
 // with nothing new means every older page was delivered too, and the walk
@@ -166,6 +205,7 @@ func (f *Forwarder) unseen(ctx context.Context) ([]sms.SMS, int, error) {
 
 		if index == 1 {
 			pages = page.Total
+			f.records = page.Records
 		}
 
 		before := len(out)

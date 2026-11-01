@@ -66,6 +66,9 @@ type Page struct {
 	Messages []SMS
 	// Total is how many pages the inbox has.
 	Total int
+	// Records is how many messages the inbox holds. The DWR-910M stops
+	// storing new SMS, silently, once it holds about 94.
+	Records int
 }
 
 // Inbox reads and deletes the messages stored on a modem.

@@ -28,6 +28,9 @@ var (
 // The modem reports "0" (failed) both for a real failure and for a send it
 // has not finished yet, so only "1" ends the wait early.
 func (c *Client) Send(ctx context.Context, to, text string) error {
+	c.sending.Lock()
+	defer c.sending.Unlock()
+
 	payload, err := json.Marshal(struct {
 		Number  string `json:"pnumber"`
 		Content string `json:"content"`

@@ -87,6 +87,23 @@ receivers:
 
 Every notification becomes one SMS of at most 160 ASCII characters per number, for example `FIRING CameraNotRecording: Doorstep has not recorded for 20m (+1 more)`: the alert name, the first alert's `summary` annotation, and a count of the rest. Characters outside ASCII are dropped, since one of them would switch the SMS to UCS-2 and its 70-character limit. Sends go out one at a time, because the modem only reports the result of the last one. A failed send answers 502, so Alertmanager retries the notification. The endpoint has no TLS: bind it to a private address and keep it behind a firewall.
 
+## Knowing that SMS still arrive
+
+A forwarder that is quiet looks the same whether nobody texted or the SIM stopped receiving. `serve` has three checks for that, and alerts on Telegram for each (after `forwarder.alert_after`, and again when it clears):
+
+- **Modem unreachable**: the inbox cannot be read.
+- **Off the network**: the modem's dashboard shows no SIM or no mobile network (`No Service`, `Limited`, ...).
+- **Heartbeat**: with `[heartbeat] number` set to the SIM's own number, `serve` texts itself every `interval` (12h by default) and expects the message back within `wait` (15m). This is the only check that proves SMS actually arrive: a suspended line, or broken SMS over LTE, passes the other two. Heartbeat messages start with `sms2telegram heartbeat ` and are never forwarded. A send that fails counts as missing and is retried within the hour. Each one is a normal SMS, so it costs what the operator charges for one.
+
+```toml
+[heartbeat]
+number = "+989390909540"
+interval = "12h"
+wait = "15m"
+```
+
+With `webhook.listen` set, the same listener serves Prometheus metrics at `/metrics`: when the inbox was last read, when every message was last delivered (a Telegram outage shows here), messages stored on the modem, SIM, registration, signal and modem uptime, and the heartbeat's last send, last return and `sms2telegram_heartbeat_missing`. Alerting on those from another machine also covers the forwarder itself being down.
+
 ## A warning about the dongle's API
 
 On this firmware some `GET /jsonp_<name>` endpoints are actions, not reads: `jsonp_auto_time_zone` toggles automatic time zone on every call, and `jsonp_recovery_system` is a factory reset. Do not crawl the API.
