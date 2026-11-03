@@ -104,6 +104,22 @@ wait = "15m"
 
 With `webhook.listen` set, the same listener serves Prometheus metrics at `/metrics`: when the inbox was last read, when every message was last delivered (a Telegram outage shows here), messages stored on the modem, SIM, registration, signal and modem uptime, and the heartbeat's last send, last return and `sms2telegram_heartbeat_missing`. Alerting on those from another machine also covers the forwarder itself being down.
 
+## Naming senders from an address book
+
+With `[contacts] url` set to a CardDAV address book collection, a message from a number on one of its cards is headed with the card's name and the number, as in `Ali Rezaei (+989121112222)`. Unknown numbers and alphanumeric senders (`PARSIANBANK`) are shown as before.
+
+```toml
+[contacts]
+url = "https://dav.example.com/user/contacts/addressbook/"
+username = "sms2telegram"
+password = "..."
+country = "98"
+```
+
+Numbers on both sides are compared in E.164: `0912…`, `0098912…`, `98912…` and `+98 912 …` are the same number, `country` being the calling code a leading `0` stands for. Short codes are compared as dialled. The name is `FN`, falling back to `ORG` and then `N`; a number on two cards takes the first.
+
+Only `PROPFIND` and `REPORT` are sent, so a read-only account is enough and is the safer choice. Every `refresh` (15m) it asks for the address book's change tag (`getctag`) and reads the cards only when it moved: a phone's address book with photos inline can be tens of megabytes. The names are cached in `contacts.json` beside the state file. When the server is down, the last names are used and messages are forwarded as usual, never held back. The metrics gain `sms2telegram_contacts_last_success_timestamp_seconds` and `sms2telegram_contacts_numbers`.
+
 ## A warning about the dongle's API
 
 On this firmware some `GET /jsonp_<name>` endpoints are actions, not reads: `jsonp_auto_time_zone` toggles automatic time zone on every call, and `jsonp_recovery_system` is a factory reset. Do not crawl the API.

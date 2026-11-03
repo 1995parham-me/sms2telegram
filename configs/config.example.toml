@@ -47,3 +47,19 @@ wait = "15m"
 timeout = "2m"
 # Defaults to heartbeat.json beside state_file.
 file = ""
+
+[contacts]
+# A CardDAV address book (the collection URL, ending in "/") to name senders
+# from: "Ali (+98912...)" instead of the bare number. Read-only; the names are
+# cached, so they survive the server being down. Empty (the default) turns it off.
+url = ""
+username = ""
+password = ""
+# Calling code national numbers (0912...) are read in.
+country = "98"
+# How often to check for changes; a full read happens only when the address
+# book's change tag moves.
+refresh = "15m"
+timeout = "2m"
+# Defaults to contacts.json beside state_file.
+file = ""

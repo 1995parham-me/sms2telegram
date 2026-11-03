@@ -14,10 +14,12 @@ import (
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/1995parham-me/sms2telegram/internal/domain/contacts"
 	"github.com/1995parham-me/sms2telegram/internal/domain/forwarder"
 	"github.com/1995parham-me/sms2telegram/internal/domain/health"
 	"github.com/1995parham-me/sms2telegram/internal/domain/heartbeat"
 	"github.com/1995parham-me/sms2telegram/internal/domain/sms"
+	"github.com/1995parham-me/sms2telegram/internal/infra/carddav"
 	"github.com/1995parham-me/sms2telegram/internal/infra/config"
 	"github.com/1995parham-me/sms2telegram/internal/infra/metrics"
 	"github.com/1995parham-me/sms2telegram/internal/infra/mifi"
@@ -63,7 +65,15 @@ func serve(ctx context.Context, cmd *cli.Command) error {
 		"heartbeat", svc.heartbeat != nil)
 
 	if cmd.Bool("once") {
+		if svc.contacts != nil {
+			svc.contacts.refresh(ctx, svc.metrics)
+		}
+
 		return pass(ctx, svc)
+	}
+
+	if svc.contacts != nil {
+		go svc.contacts.run(ctx, cfg.Contacts.Refresh, svc.metrics)
 	}
 
 	if cfg.Webhook.Listen != "" {
@@ -84,6 +94,48 @@ type service struct {
 	modem     *mifi.Client
 	heartbeat *heartbeat.Heartbeat
 	metrics   *metrics.Registry
+	contacts  *addressBook
+}
+
+// addressBook keeps the sender names fresh. A failed read keeps the names
+// it had: naming senders is a nicety, and must never hold up forwarding.
+type addressBook struct {
+	dir *contacts.Directory
+	src contacts.Source
+}
+
+func (a *addressBook) run(ctx context.Context, every time.Duration, reg *metrics.Registry) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
+	for {
+		a.refresh(ctx, reg)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (a *addressBook) refresh(ctx context.Context, reg *metrics.Registry) {
+	changed, err := a.dir.Refresh(ctx, a.src)
+	if err != nil {
+		slog.WarnContext(ctx, "address book not read, keeping the names already known",
+			"error", err, "numbers", a.dir.Len())
+
+		return
+	}
+
+	if changed {
+		slog.InfoContext(ctx, "address book loaded", "numbers", a.dir.Len())
+	}
+
+	reg.Update(func(s *metrics.Snapshot) {
+		s.ContactsOK = time.Now()
+		s.Contacts = a.dir.Len()
+	})
 }
 
 // listen serves the Alertmanager webhook and the metrics until the returned
@@ -292,6 +344,23 @@ func build(cfg config.Config, version string) (*service, error) {
 		modem:     modem,
 		heartbeat: nil,
 		metrics:   metrics.New(version),
+		contacts:  nil,
+	}
+
+	if c := cfg.Contacts; c.URL != "" {
+		file := cmp.Or(c.File, filepath.Join(filepath.Dir(cfg.Forwarder.StateFile), "contacts.json"))
+
+		dir, err := contacts.Open(c.Country, file)
+		if err != nil {
+			return nil, fmt.Errorf("opening contacts: %w", err)
+		}
+
+		svc.contacts = &addressBook{dir: dir, src: carddav.New(c.URL, c.Username, c.Password, c.Timeout)}
+		bot.SetNames(dir.Name)
+		svc.metrics.Update(func(s *metrics.Snapshot) {
+			s.ContactsOn = true
+			s.Contacts = dir.Len()
+		})
 	}
 
 	if hb := cfg.Heartbeat; hb.Number != "" {

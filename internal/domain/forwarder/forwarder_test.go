@@ -78,8 +78,8 @@ func (s store) MarkSeen(key string) error {
 
 func messages() *inbox {
 	return &inbox{reads: 0, msgs: []sms.SMS{
-		{Sender: "98100", Date: "2026-10-22 12:27:20", Content: "newest", Position: 0},
-		{Sender: "", Date: "2026-10-22 12:26:39", Content: "middle", Position: 0},
+		{Sender: "98100", Name: "", Date: "2026-10-22 12:27:20", Content: "newest", Position: 0},
+		{Sender: "", Name: "", Date: "2026-10-22 12:26:39", Content: "middle", Position: 0},
 		{Sender: "989981000000", Date: "2025-07-03 11:48:03", Content: "Code: 0789", Position: 0},
 	}}
 }
@@ -134,7 +134,7 @@ func TestForwardStopsAtADeliveredPage(t *testing.T) {
 
 	in := &inbox{reads: 0, msgs: nil}
 	for k := range 9 {
-		in.arrive(sms.SMS{Sender: "98100", Date: fmt.Sprintf("2026-10-22 12:00:%02d", k), Content: "old", Position: 0})
+		in.arrive(sms.SMS{Sender: "98100", Name: "", Date: fmt.Sprintf("2026-10-22 12:00:%02d", k), Content: "old", Position: 0})
 	}
 
 	f := forwarder.New(in, &notifier{got: nil, failAt: 0}, store{}, false)
@@ -144,7 +144,7 @@ func TestForwardStopsAtADeliveredPage(t *testing.T) {
 
 	// Three arrivals fill page 1 and spill onto page 2, so page 3 is the first with nothing new.
 	for k := range 3 {
-		in.arrive(sms.SMS{Sender: "98100", Date: fmt.Sprintf("2026-10-22 13:00:%02d", k), Content: "new", Position: 0})
+		in.arrive(sms.SMS{Sender: "98100", Name: "", Date: fmt.Sprintf("2026-10-22 13:00:%02d", k), Content: "new", Position: 0})
 	}
 
 	forward(t, f, in, 3, 3)
@@ -167,7 +167,7 @@ func TestForwardDeletesDeliveredBeyondFirstPage(t *testing.T) {
 
 	in := &inbox{reads: 0, msgs: nil}
 	for k := range 5 {
-		in.arrive(sms.SMS{Sender: "98100", Date: fmt.Sprintf("2026-10-22 12:00:%02d", k), Content: "m", Position: 0})
+		in.arrive(sms.SMS{Sender: "98100", Name: "", Date: fmt.Sprintf("2026-10-22 12:00:%02d", k), Content: "m", Position: 0})
 	}
 
 	n := &notifier{got: nil, failAt: 0}
@@ -201,8 +201,8 @@ func TestForwardKeepsUndeliveredOnFailure(t *testing.T) {
 func TestKeyDistinguishesFields(t *testing.T) {
 	t.Parallel()
 
-	a := sms.SMS{Sender: "x", Date: "ab", Content: "c", Position: 0}
-	b := sms.SMS{Sender: "x", Date: "a", Content: "bc", Position: 0}
+	a := sms.SMS{Sender: "x", Name: "", Date: "ab", Content: "c", Position: 0}
+	b := sms.SMS{Sender: "x", Name: "", Date: "a", Content: "bc", Position: 0}
 
 	if a.Key() == b.Key() {
 		t.Fatal("keys collide across field boundaries")
@@ -212,8 +212,8 @@ func TestKeyDistinguishesFields(t *testing.T) {
 func TestKeyIgnoresSender(t *testing.T) {
 	t.Parallel()
 
-	a := sms.SMS{Sender: "989377070000", Date: "d", Content: "c", Position: 0}
-	b := sms.SMS{Sender: "PARSIANBANK", Date: "d", Content: "c", Position: 0}
+	a := sms.SMS{Sender: "989377070000", Name: "", Date: "d", Content: "c", Position: 0}
+	b := sms.SMS{Sender: "PARSIANBANK", Name: "", Date: "d", Content: "c", Position: 0}
 
 	if a.Key() != b.Key() || a.LegacyKey() == b.LegacyKey() {
 		t.Fatal("Key must ignore the sender and LegacyKey must not")
@@ -260,7 +260,7 @@ func TestForwardHoldsIncompleteMultipart(t *testing.T) {
 	f := forwarder.New(in, n, store{}, false)
 	f.SetClock(func() time.Time { return now })
 
-	in.arrive(sms.SMS{Sender: ".IRANCELL.", Date: "2026-11-01 00:48:15", Content: "first part(......)", Position: 0})
+	in.arrive(sms.SMS{Sender: ".IRANCELL.", Name: "", Date: "2026-11-01 00:48:15", Content: "first part(......)", Position: 0})
 	forward(t, f, in, 0, 1)
 
 	now = now.Add(time.Minute)
@@ -281,11 +281,11 @@ func TestForwardReleasesIncompleteAfterHold(t *testing.T) {
 	f := forwarder.New(in, &notifier{got: nil, failAt: 0}, store{}, false)
 	f.SetClock(func() time.Time { return now })
 
-	in.arrive(sms.SMS{Sender: "98100", Date: "2026-11-01 00:48:15", Content: "lonely(......)", Position: 0})
+	in.arrive(sms.SMS{Sender: "98100", Name: "", Date: "2026-11-01 00:48:15", Content: "lonely(......)", Position: 0})
 	forward(t, f, in, 0, 1)
 
 	// A complete message behind it is not held up.
-	in.arrive(sms.SMS{Sender: "98100", Date: "2026-11-01 00:49:00", Content: "Code: 1234", Position: 0})
+	in.arrive(sms.SMS{Sender: "98100", Name: "", Date: "2026-11-01 00:49:00", Content: "Code: 1234", Position: 0})
 	forward(t, f, in, 1, 1)
 
 	now = now.Add(forwarder.DefaultHold)

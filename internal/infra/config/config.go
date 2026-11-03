@@ -28,6 +28,21 @@ type Config struct {
 	Forwarder Forwarder `json:"forwarder" koanf:"forwarder"`
 	Webhook   Webhook   `json:"webhook"   koanf:"webhook"`
 	Heartbeat Heartbeat `json:"heartbeat" koanf:"heartbeat"`
+	Contacts  Contacts  `json:"contacts"  koanf:"contacts"`
+}
+
+// Contacts names senders from the CardDAV address book at URL (the
+// collection, ending in a slash), read every Refresh. Country is the calling
+// code national numbers are read in. File caches the names across restarts;
+// empty puts it beside the state file. An empty URL turns it off.
+type Contacts struct {
+	URL      string        `json:"url"      koanf:"url"`
+	Username string        `json:"username" koanf:"username"`
+	Password string        `json:"-"        koanf:"password"`
+	Country  string        `json:"country"  koanf:"country"`
+	Refresh  time.Duration `json:"refresh"  koanf:"refresh"`
+	Timeout  time.Duration `json:"timeout"  koanf:"timeout"`
+	File     string        `json:"file"     koanf:"file"`
 }
 
 // Heartbeat texts Number, the SIM's own number, every Interval and alerts
@@ -87,6 +102,8 @@ const (
 	heartbeatEvery   = 12 * time.Hour
 	heartbeatWait    = 15 * time.Minute
 	heartbeatTimeout = 2 * time.Minute
+	contactsRefresh  = 15 * time.Minute
+	contactsTimeout  = 2 * time.Minute
 )
 
 // Default returns the configuration used when nothing overrides it.
@@ -111,6 +128,15 @@ func Default() Config {
 			Interval: heartbeatEvery,
 			Wait:     heartbeatWait,
 			Timeout:  heartbeatTimeout,
+			File:     "",
+		},
+		Contacts: Contacts{
+			URL:      "",
+			Username: "",
+			Password: "",
+			Country:  "98",
+			Refresh:  contactsRefresh,
+			Timeout:  contactsTimeout,
 			File:     "",
 		},
 	}

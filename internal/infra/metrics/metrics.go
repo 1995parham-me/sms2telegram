@@ -40,6 +40,13 @@ type Snapshot struct {
 	HeartbeatSent time.Time
 	HeartbeatBack time.Time
 	HeartbeatMiss bool
+
+	// ContactsOn is whether senders are named from an address book;
+	// ContactsOK is when it was last read (changed or not), Contacts how
+	// many numbers have a name.
+	ContactsOn bool
+	ContactsOK time.Time
+	Contacts   int
 }
 
 // Registry holds the latest snapshot.
@@ -110,6 +117,14 @@ func write(w io.Writer, s Snapshot) {
 			stamp(s.HeartbeatBack))
 		gauge("sms2telegram_heartbeat_missing", "1 if the last heartbeat SMS failed or has not come back.",
 			flag(s.HeartbeatMiss))
+	}
+
+	gauge("sms2telegram_contacts_enabled", "1 if senders are named from an address book.", flag(s.ContactsOn))
+
+	if s.ContactsOn {
+		gauge("sms2telegram_contacts_last_success_timestamp_seconds", "When the address book was last read.",
+			stamp(s.ContactsOK))
+		gauge("sms2telegram_contacts_numbers", "Phone numbers with a name.", strconv.Itoa(s.Contacts))
 	}
 }
 

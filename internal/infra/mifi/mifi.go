@@ -126,7 +126,7 @@ func (c *Client) Page(ctx context.Context, index int) (sms.Page, error) {
 		Records:  p.TotalRecords,
 	}
 	for _, m := range p.Data {
-		out.Messages = append(out.Messages, sms.SMS{Sender: m.Phone, Date: m.Date, Content: m.Content, Position: m.Position})
+		out.Messages = append(out.Messages, sms.SMS{Sender: m.Phone, Name: "", Date: m.Date, Content: m.Content, Position: m.Position})
 	}
 
 	return out, nil

@@ -29,6 +29,7 @@ type Bot struct {
 	endpoint string
 	chatID   string
 	http     *http.Client
+	names    func(sender string) string
 }
 
 // New returns a bot that posts to chatID. The client honours HTTP_PROXY and
@@ -38,8 +39,12 @@ func New(apiURL, token, chatID string, timeout time.Duration) *Bot {
 		endpoint: strings.TrimRight(apiURL, "/") + "/bot" + token + "/sendMessage",
 		chatID:   chatID,
 		http:     &http.Client{Timeout: timeout}, //nolint:exhaustruct_v5 // only the set fields matter.
+		names:    nil,
 	}
 }
+
+// SetNames names senders with names, which returns "" for an unknown number.
+func (b *Bot) SetNames(names func(sender string) string) { b.names = names }
 
 // Format renders msg as Telegram HTML.
 func Format(msg sms.SMS) string {
@@ -48,11 +53,15 @@ func Format(msg sms.SMS) string {
 }
 
 func senderOf(msg sms.SMS) string {
-	if msg.Sender == "" {
+	switch {
+	case msg.Sender == "":
 		return "unknown sender"
+	case msg.Name != "":
+		// The number stays, so a wrong match is visible.
+		return msg.Name + " (" + msg.Sender + ")"
+	default:
+		return msg.Sender
 	}
-
-	return msg.Sender
 }
 
 func truncate(content string) string {
@@ -80,6 +89,10 @@ type response struct {
 // and hold back every SMS behind it, so it is sent again as plain text, and
 // failing that with its text escaped to ASCII: degraded, but delivered.
 func (b *Bot) Notify(ctx context.Context, msg sms.SMS) error {
+	if b.names != nil && msg.Name == "" && msg.Sender != "" {
+		msg.Name = b.names(msg.Sender)
+	}
+
 	err := b.send(ctx, Format(msg), "HTML")
 	if !badRequest(err) {
 		return err

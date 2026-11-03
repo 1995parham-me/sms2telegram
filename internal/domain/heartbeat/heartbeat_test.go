@@ -67,7 +67,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal("not missing after the wait")
 	}
 
-	msg := sms.SMS{Sender: "+989390909540", Date: "d", Content: out.texts[0], Position: 0}
+	msg := sms.SMS{Sender: "+989390909540", Name: "", Date: "d", Content: out.texts[0], Position: 0}
 	if !h.Consume(msg, start.Add(wait+time.Minute)) {
 		t.Fatal("the heartbeat text was not consumed")
 	}
@@ -88,7 +88,7 @@ func TestIgnoresOtherMessages(t *testing.T) {
 
 	h := open(t, &outbox{texts: nil, err: nil}, filepath.Join(t.TempDir(), "hb.json"))
 
-	if h.Consume(sms.SMS{Sender: "PARSIANBANK", Date: "d", Content: "Code: 1234", Position: 0}, start) {
+	if h.Consume(sms.SMS{Sender: "PARSIANBANK", Name: "", Date: "d", Content: "Code: 1234", Position: 0}, start) {
 		t.Fatal("an ordinary message was consumed")
 	}
 }

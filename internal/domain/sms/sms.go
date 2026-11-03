@@ -19,6 +19,9 @@ type SMS struct {
 	Sender string `json:"sender"`
 	// Date is the receive time exactly as the modem reports it.
 	Date string `json:"date"`
+	// Name is the sender's name from the address book, empty when unknown.
+	// It is filled in on delivery and is not part of the message's identity.
+	Name string `json:"-"`
 	// Content is the decoded message text.
 	Content string `json:"content"`
 	// Position is where the modem holds the message right now, 0 being the
