@@ -1,6 +1,7 @@
 package carddav
 
 import (
+	"cmp"
 	"strings"
 
 	"github.com/1995parham-me/sms2telegram/internal/domain/contacts"
@@ -10,9 +11,7 @@ import (
 // The name is FN, falling back to ORG and then to N. Anything it does not
 // understand is skipped, never an error: one odd card must not cost the rest.
 func Parse(card string) contacts.Card {
-	var fn, org, n string
-
-	var phones []string
+	var c fields
 
 	for _, line := range unfold(card) {
 		name, value, ok := strings.Cut(line, ":")
@@ -26,30 +25,35 @@ func Parse(card string) contacts.Card {
 			name = name[i+1:]
 		}
 
-		switch strings.ToUpper(name) {
-		case "FN":
-			fn = unescape(value)
-		case "ORG":
-			org = strings.Trim(strings.ReplaceAll(unescape(value), ";", " "), " ")
-		case "N":
-			n = structuredName(value)
-		case "TEL":
-			if tel := strings.TrimSpace(strings.TrimPrefix(value, "tel:")); tel != "" {
-				phones = append(phones, tel)
-			}
+		c.add(strings.ToUpper(name), value)
+	}
+
+	return contacts.Card{Name: c.name(), Phones: c.phones}
+}
+
+// fields collects the properties Parse looks at.
+type fields struct {
+	fn, org, n string
+	phones     []string
+}
+
+func (c *fields) add(name, value string) {
+	switch name {
+	case "FN":
+		c.fn = strings.TrimSpace(unescape(value))
+	case "ORG":
+		c.org = strings.TrimSpace(strings.ReplaceAll(unescape(value), ";", " "))
+	case "N":
+		c.n = structuredName(value)
+	case "TEL":
+		if tel := strings.TrimSpace(strings.TrimPrefix(value, "tel:")); tel != "" {
+			c.phones = append(c.phones, tel)
 		}
 	}
+}
 
-	name := fn
-	if strings.TrimSpace(name) == "" {
-		name = org
-	}
-
-	if strings.TrimSpace(name) == "" {
-		name = n
-	}
-
-	return contacts.Card{Name: strings.TrimSpace(name), Phones: phones}
+func (c *fields) name() string {
+	return cmp.Or(c.fn, c.org, c.n)
 }
 
 // unfold joins continuation lines (RFC 6350 3.2) and splits on CRLF or LF.

@@ -35,6 +35,10 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
+const elaheh = "Elaheh"
+
+var errDown = errors.New("down")
+
 type source struct {
 	ctag  string
 	cards []contacts.Card
@@ -50,8 +54,9 @@ func (s *source) Cards(context.Context) ([]contacts.Card, error) {
 	return s.cards, nil
 }
 
-func TestRefreshCachesAndSkipsUnchanged(t *testing.T) {
-	t.Parallel()
+// loaded is a directory cached in a temporary file and refreshed once.
+func loaded(t *testing.T) (*contacts.Directory, *source, string) {
+	t.Helper()
 
 	file := filepath.Join(t.TempDir(), "contacts.json")
 
@@ -61,7 +66,7 @@ func TestRefreshCachesAndSkipsUnchanged(t *testing.T) {
 	}
 
 	src := &source{ctag: "a", reads: 0, err: nil, cards: []contacts.Card{
-		{Name: "Elaheh", Phones: []string{"0912 111 2222", "+34 600 000 000"}},
+		{Name: elaheh, Phones: []string{"0912 111 2222", "+34 600 000 000"}},
 		{Name: "Duplicate", Phones: []string{"+989121112222"}},
 	}}
 
@@ -69,25 +74,49 @@ func TestRefreshCachesAndSkipsUnchanged(t *testing.T) {
 		t.Fatalf("first refresh = %v, %v", changed, err)
 	}
 
+	return dir, src, file
+}
+
+func TestRefreshSkipsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	dir, src, _ := loaded(t)
+
 	if changed, err := dir.Refresh(t.Context(), src); err != nil || changed || src.reads != 1 {
 		t.Fatalf("unchanged refresh = %v, %v after %d reads", changed, err, src.reads)
 	}
 
-	if got := dir.Name("+989121112222"); got != "Elaheh" {
+	if got := dir.Name("+989121112222"); got != elaheh {
 		t.Errorf("Name = %q, want the first card's", got)
 	}
+}
 
-	src.err = errors.New("down")
-	if _, err := dir.Refresh(t.Context(), src); err == nil || dir.Name("+34600000000") != "Elaheh" {
-		t.Errorf("a failed refresh must keep the names: err %v", err)
+func TestFailedRefreshKeepsNames(t *testing.T) {
+	t.Parallel()
+
+	dir, src, _ := loaded(t)
+
+	src.err = errDown
+	if _, err := dir.Refresh(t.Context(), src); err == nil {
+		t.Error("a failed refresh must be reported")
 	}
+
+	if got := dir.Name("+34600000000"); got != elaheh {
+		t.Errorf("Name after a failed refresh = %q", got)
+	}
+}
+
+func TestNamesSurviveRestart(t *testing.T) {
+	t.Parallel()
+
+	_, _, file := loaded(t)
 
 	reopened, err := contacts.Open("98", file)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got := reopened.Name("989121112222"); got != "Elaheh" {
+	if got := reopened.Name("989121112222"); got != elaheh {
 		t.Errorf("cached Name = %q", got)
 	}
 

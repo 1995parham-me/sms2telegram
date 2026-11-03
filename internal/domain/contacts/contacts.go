@@ -162,6 +162,40 @@ const minNational = 8
 func Normalize(number, country string) string {
 	number = strings.TrimSpace(number)
 
+	d, ok := digitsOf(number)
+	if !ok || d == "" {
+		return ""
+	}
+
+	switch {
+	case strings.HasPrefix(number, "+"):
+		return "+" + d
+	case strings.HasPrefix(d, "00"):
+		return "+" + d[2:]
+	case country == "":
+		return d
+	default:
+		return national(d, country)
+	}
+}
+
+// national reads a number written without an international prefix.
+func national(d, country string) string {
+	if strings.HasPrefix(d, "0") && len(d) >= minNational {
+		return "+" + country + d[1:]
+	}
+
+	// 98912... as some phones and modems write it, without the plus.
+	if strings.HasPrefix(d, country) && len(d) >= minNational+len(country) {
+		return "+" + d
+	}
+
+	return d
+}
+
+// digitsOf keeps the digits of a phone number, reporting false for anything
+// that is not one: a letter, or a "+" past the start.
+func digitsOf(number string) (string, bool) {
 	var digits strings.Builder
 
 	for i, r := range number {
@@ -171,30 +205,13 @@ func Normalize(number, country string) string {
 		case unicode.IsDigit(r):
 			// Persian and Arabic-Indic digits, as typed on a phone.
 			digits.WriteRune('0' + localDigit(r))
-		case r == '+' && i == 0:
-		case r == ' ' || r == '-' || r == '(' || r == ')' || r == '.' || r == '/':
+		case r == '+' && i == 0, strings.ContainsRune(" -()./", r):
 		default:
-			return ""
+			return "", false
 		}
 	}
 
-	d := digits.String()
-
-	switch {
-	case d == "":
-		return ""
-	case strings.HasPrefix(number, "+"):
-		return "+" + d
-	case strings.HasPrefix(d, "00"):
-		return "+" + d[2:]
-	case strings.HasPrefix(d, "0") && len(d) >= minNational && country != "":
-		return "+" + country + d[1:]
-	case country != "" && strings.HasPrefix(d, country) && len(d) >= minNational+len(country):
-		// 98912... as some phones and modems write it, without the plus.
-		return "+" + d
-	default:
-		return d
-	}
+	return digits.String(), true
 }
 
 func localDigit(r rune) rune {

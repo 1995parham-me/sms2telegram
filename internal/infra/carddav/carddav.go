@@ -20,6 +20,9 @@ import (
 // ErrStatus reports an answer other than 207 Multi-Status.
 var ErrStatus = errors.New("carddav server answered with an unexpected status")
 
+// drainLimit bounds how much of an error answer is read before closing.
+const drainLimit = 1 << 16
+
 // errNoCTag reports a server that keeps no change tag for the collection.
 var errNoCTag = errors.New("the address book has no getctag")
 
@@ -45,7 +48,9 @@ type Client struct {
 // New returns a client for the address book collection at url, which ends in
 // a slash. An empty username sends no credentials.
 func New(url, username, password string, timeout time.Duration) *Client {
-	return NewWithClient(url, username, password, &http.Client{Timeout: timeout}) //nolint:exhaustruct_v5 // only the set fields matter.
+	client := &http.Client{Timeout: timeout} //nolint:exhaustruct_v5 // only the set fields matter.
+
+	return NewWithClient(url, username, password, client)
 }
 
 // NewWithClient is New with a caller-supplied HTTP client, for tests.
@@ -132,12 +137,16 @@ func (c *Client) do(ctx context.Context, method, depth, body string, each func(r
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusMultiStatus {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, drainLimit))
 
 		return fmt.Errorf("%w: %s %s: %s", ErrStatus, method, c.url, resp.Status)
 	}
 
-	dec := xml.NewDecoder(resp.Body)
+	return decode(resp.Body, method, each)
+}
+
+func decode(body io.Reader, method string, each func(response)) error {
+	dec := xml.NewDecoder(body)
 
 	for {
 		tok, err := dec.Token()

@@ -44,7 +44,8 @@ func TestNotify(t *testing.T) {
 
 	bot := telegram.New(srv.URL, "TOKEN", "42", time.Second)
 
-	if err := bot.Notify(t.Context(), sms.SMS{Sender: "98100", Name: "", Date: "d", Content: "hi", Position: 0}); err != nil {
+	msg := sms.SMS{Sender: "98100", Name: "", Date: "d", Content: "hi", Position: 0}
+	if err := bot.Notify(t.Context(), msg); err != nil {
 		t.Fatal(err)
 	}
 
@@ -73,7 +74,8 @@ func TestNotifyNamesTheSender(t *testing.T) {
 		return ""
 	})
 
-	if err := bot.Notify(t.Context(), sms.SMS{Sender: "+989121112222", Name: "", Date: "d", Content: "hi", Position: 0}); err != nil {
+	msg := sms.SMS{Sender: "+989121112222", Name: "", Date: "d", Content: "hi", Position: 0}
+	if err := bot.Notify(t.Context(), msg); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,7 +83,8 @@ func TestNotifyNamesTheSender(t *testing.T) {
 		t.Fatalf("sender not named: %q", got["text"])
 	}
 
-	if err := bot.Notify(t.Context(), sms.SMS{Sender: "PARSIANBANK", Name: "", Date: "d", Content: "hi", Position: 0}); err != nil {
+	msg = sms.SMS{Sender: "PARSIANBANK", Name: "", Date: "d", Content: "hi", Position: 0}
+	if err := bot.Notify(t.Context(), msg); err != nil {
 		t.Fatal(err)
 	}
 
@@ -133,7 +136,8 @@ func TestNotifyFallsBackToPlainText(t *testing.T) {
 
 	bot := telegram.New(srv.URL, "TOKEN", "42", time.Second)
 
-	if err := bot.Notify(t.Context(), sms.SMS{Sender: "98100", Name: "", Date: "d", Content: "hi", Position: 0}); err != nil {
+	msg := sms.SMS{Sender: "98100", Name: "", Date: "d", Content: "hi", Position: 0}
+	if err := bot.Notify(t.Context(), msg); err != nil {
 		t.Fatal(err)
 	}
 

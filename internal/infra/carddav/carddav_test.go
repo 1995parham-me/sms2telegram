@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/1995parham-me/sms2telegram/internal/domain/contacts"
 	"github.com/1995parham-me/sms2telegram/internal/infra/carddav"
 )
 
@@ -38,8 +39,9 @@ const propfind = `<ns0:multistatus xmlns:ns0="DAV:" xmlns:ns1="http://calendarse
 	`<ns0:href>/user/contacts/addressbook/</ns0:href><ns0:propstat><ns0:status>HTTP/1.1 200 OK</ns0:status>` +
 	`<ns0:prop><ns1:getctag>f3da19be</ns1:getctag></ns0:prop></ns0:propstat></ns0:response></ns0:multistatus>`
 
-func TestClient(t *testing.T) {
-	t.Parallel()
+// server answers like xandikos, behind basic auth as sms:secret.
+func server(t *testing.T) *httptest.Server {
+	t.Helper()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if u, p, ok := r.BasicAuth(); !ok || u != "sms" || p != "secret" {
@@ -61,29 +63,45 @@ func TestClient(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := carddav.NewWithClient(srv.URL+"/user/contacts/addressbook/", "sms", "secret", srv.Client())
+	return srv
+}
 
-	tag, err := c.CTag(t.Context())
+func client(srv *httptest.Server, password string) *carddav.Client {
+	return carddav.NewWithClient(srv.URL+"/user/contacts/addressbook/", "sms", password, srv.Client())
+}
+
+func TestCTag(t *testing.T) {
+	t.Parallel()
+
+	srv := server(t)
+
+	tag, err := client(srv, "secret").CTag(t.Context())
 	if err != nil || tag != "f3da19be" {
 		t.Fatalf("CTag = %q, %v", tag, err)
 	}
 
-	cards, err := c.Cards(t.Context())
+	if _, err := client(srv, "wrong").CTag(t.Context()); err == nil {
+		t.Error("a 401 must be an error")
+	}
+}
+
+func TestCards(t *testing.T) {
+	t.Parallel()
+
+	cards, err := client(server(t), "secret").Cards(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(cards) != 2 || cards[0].Name != "Aparat Sport" || !slices.Equal(cards[0].Phones, []string{"+982173608560"}) {
-		t.Errorf("first card = %+v", cards)
+	want := []contacts.Card{
+		{Name: "Aparat Sport", Phones: []string{"+982173608560"}},
+		{Name: "Ali Rezaei", Phones: []string{"+989121112222"}},
 	}
 
-	if cards[1].Name != "Ali Rezaei" || !slices.Equal(cards[1].Phones, []string{"+989121112222"}) {
-		t.Errorf("second card = %+v", cards[1])
-	}
-
-	bad := carddav.NewWithClient(srv.URL+"/user/contacts/addressbook/", "sms", "wrong", srv.Client())
-	if _, err := bad.CTag(t.Context()); err == nil {
-		t.Error("a 401 must be an error")
+	if !slices.EqualFunc(cards, want, func(a, b contacts.Card) bool {
+		return a.Name == b.Name && slices.Equal(a.Phones, b.Phones)
+	}) {
+		t.Errorf("Cards = %+v, want %+v", cards, want)
 	}
 }
 
