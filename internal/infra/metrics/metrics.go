@@ -5,7 +5,9 @@ package metrics
 import (
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,6 +49,15 @@ type Snapshot struct {
 	ContactsOn bool
 	ContactsOK time.Time
 	Contacts   int
+
+	// Sent counts the SMS sent, and SendFailed the sends the modem did not
+	// confirm, by who asked for them (ui, mcp, alertmanager).
+	Sent       map[string]int
+	SendFailed map[string]int
+	// Archived is how many messages the history holds; Notices how many of
+	// the service's own alerts wait for Telegram.
+	Archived int
+	Notices  int
 }
 
 // Registry holds the latest snapshot.
@@ -68,11 +79,21 @@ func (r *Registry) Update(fn func(*Snapshot)) {
 	fn(&r.snap)
 }
 
+// Snapshot returns a copy of the latest snapshot.
+func (r *Registry) Snapshot() Snapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	s := r.snap
+	s.Sent = maps.Clone(s.Sent)
+	s.SendFailed = maps.Clone(s.SendFailed)
+
+	return s
+}
+
 // ServeHTTP writes the snapshot.
 func (r *Registry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
-	r.mu.Lock()
-	s := r.snap
-	r.mu.Unlock()
+	s := r.Snapshot()
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	write(w, s)
@@ -125,6 +146,21 @@ func write(w io.Writer, s Snapshot) {
 		gauge("sms2telegram_contacts_last_success_timestamp_seconds", "When the address book was last read.",
 			stamp(s.ContactsOK))
 		gauge("sms2telegram_contacts_numbers", "Phone numbers with a name.", strconv.Itoa(s.Contacts))
+	}
+
+	counters(w, "sms2telegram_sent_total", "SMS sent from the SIM, by who asked.", s.Sent)
+	counters(w, "sms2telegram_send_failures_total", "Sends the modem did not confirm, by who asked.", s.SendFailed)
+	gauge("sms2telegram_archive_messages", "Messages in the history.", strconv.Itoa(s.Archived))
+	gauge("sms2telegram_notices_pending", "Alerts of the service itself that wait for Telegram.",
+		strconv.Itoa(s.Notices))
+}
+
+// counters writes one counter with a source label per entry, in a stable order.
+func counters(w io.Writer, name, help string, values map[string]int) {
+	_, _ = fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n", name, help, name)
+
+	for _, source := range slices.Sorted(maps.Keys(values)) {
+		_, _ = fmt.Fprintf(w, "%s{source=%s} %d\n", name, quote(source), values[source])
 	}
 }
 

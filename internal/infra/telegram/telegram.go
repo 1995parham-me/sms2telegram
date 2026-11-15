@@ -49,7 +49,7 @@ func (b *Bot) SetNames(names func(sender string) string) { b.names = names }
 // Format renders msg as Telegram HTML.
 func Format(msg sms.SMS) string {
 	return fmt.Sprintf("📩 <b>%s</b>\n<i>%s</i>\n\n%s",
-		html.EscapeString(senderOf(msg)), html.EscapeString(msg.Date), html.EscapeString(truncate(msg.Content)))
+		html.EscapeString(senderOf(msg)), html.EscapeString(msg.Date), markCodes(truncate(msg.Content)))
 }
 
 func senderOf(msg sms.SMS) string {

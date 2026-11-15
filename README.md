@@ -1,6 +1,6 @@
 # sms2telegram
 
-Forward the SMS inbox of a 4G USB dongle to a Telegram chat, send SMS from it, and text Alertmanager alerts when the internet is down.
+Forward the SMS inbox of a 4G USB dongle to a Telegram chat, read and send SMS from a web UI or from an assistant over MCP, and text Alertmanager alerts when the internet is down.
 
 Plug a SIM into a cheap MiFi dongle, plug the dongle into a Linux box, and every SMS that lands on the SIM (bank codes, operator notices, one-time passwords) shows up in Telegram a few seconds later.
 
@@ -19,6 +19,10 @@ Messages are left on the modem unless `forwarder.delete_forwarded` is on. A full
 The DWR-910M sends emoji as CESU-8 (each UTF-16 surrogate half encoded on its own), which is invalid UTF-8; they are decoded back before anything else sees the text.
 
 If the dongle stays unreachable for `alert_after` (10 minutes by default), a Telegram alert says SMS are not being received, and another says when it is back. Shorter blips, like a dongle reboot, are not reported. A Telegram outage cannot be reported over Telegram, so delivery failures are only logged (and retried).
+
+A verification code in a message (4 to 8 digits standing on their own) is sent as `<code>`, so one tap in Telegram copies it. Amounts, dates and card numbers are left alone.
+
+The service's own alerts (modem unreachable, SIM off the network, heartbeat missing) are queued when Telegram does not take them and sent on a later pass, so an alert raised during a Telegram outage is not lost.
 
 ## Install
 
@@ -52,19 +56,64 @@ sms2telegram list                  # print the inbox, send nothing
 sms2telegram serve --once          # one pass
 sms2telegram -c config.toml serve  # poll forever
 sms2telegram send --to +989121234567 "on my way"  # send an SMS from the SIM
+sms2telegram hash-password         # a bcrypt hash for [ui.users]
+sms2telegram mcp-token claude      # a bearer token for [mcp.tokens]
 ```
 
 `send` waits up to `--timeout` (1 minute) for the modem to confirm the message went out. The DWR-910M answers "failed" for a moment right after every submit, so only a "sent" ends the wait early; a real failure shows up as a timeout. The dongle keeps no copy of sent messages.
 
 A hardened systemd unit is in [`deployments/sms2telegram.service`](deployments/sms2telegram.service): put the binary in `/usr/local/bin` and the config in `/etc/sms2telegram/config.toml` (root, `0600`; systemd passes it to the service as a credential), then `systemctl enable --now sms2telegram`.
 
+## Message history
+
+Every forwarded message and every SMS sent through the service is appended to `messages.jsonl` beside the state file (`[archive] file`), one JSON object per line. The modem holds a few dozen messages, keeps no copy of what it sends, and `delete_forwarded` removes what was delivered, so this file is the only history. The web UI and the MCP tools read it. Heartbeats are not stored. Set `[modem] timezone` to the zone of the modem's clock (`Asia/Tehran`), which the dates of received messages are read in.
+
+## Web UI
+
+Set `[server] listen` and at least one user, and the same listener serves a web UI at `/`:
+
+```toml
+[server]
+listen = "192.168.1.10:9097"
+
+[ui.users]
+parham = "$2a$10$..."   # sms2telegram hash-password
+```
+
+It shows the conversations with the names from the address book, sends SMS (with a counter of characters and billed parts, which matters for Persian: 70 per part), searches the history, shows new messages as they arrive, runs USSD codes such as a balance check, and shows the modem's state. Verification codes copy on a click. Everything it loads is embedded in the binary, so it works where a CDN does not.
+
+Logins are bcrypt hashes, sessions are signed cookies that end when the password changes, and five wrong passwords lock an address out for 15 minutes. The listener has no TLS: reach it on a private network, or put a reverse proxy in front and name it in `server.trusted_proxies`, so the session cookie is marked `Secure` and the lockout counts the real client.
+
+## MCP
+
+With a token in `[mcp.tokens]`, the listener serves a [Model Context Protocol](https://modelcontextprotocol.io) endpoint at `/mcp` (Streamable HTTP, bearer token), so an assistant such as Claude can work with the SIM:
+
+```bash
+sms2telegram mcp-token claude   # prints the token and its [mcp.tokens] line
+claude mcp add --transport http sms http://192.168.1.10:9097/mcp --header "Authorization: Bearer sms_..."
+```
+
+| Tool | What it does |
+| --- | --- |
+| `status` | SIM, network, signal, last read and delivery, heartbeat, SMS left today |
+| `list_conversations` | who, how many messages, the newest of each |
+| `list_messages` | the history, by conversation, text, direction and time |
+| `wait_for_sms` | blocks until the next SMS arrives (from a sender, or containing a text): the way to read a verification code |
+| `send_sms` | sends an SMS; a dry run unless `yes` is true |
+| `ussd` | runs a USSD code; a dry run unless `yes` is true |
+
+`send_sms` and `ussd` return a preview and do nothing until they are called again with `yes: true`, so the assistant shows the recipient and the text before anything is sent. Only the SHA-256 of a token is in the config.
+
+## Sending limits
+
+SMS cost money and an assistant can loop, so sends from the UI and MCP are limited in `[send]`: `daily_limit` (30) SMS in any 24 hours, counting failed attempts, and `max_parts` (4) parts per message. Alertmanager's SMS and heartbeats never count. A send does not stop when its caller goes away (a closed tab, an Alertmanager timeout): the modem has the message by then, and reporting it as failed would send it twice.
+
 ## Alertmanager fallback
 
-`serve` can also receive [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) notifications and text each one from the SIM. Use it as the channel that still works when the internet does not: it needs only the LAN and the mobile network. Turn it on in the `[webhook]` section:
+`serve` can also receive [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) notifications and text each one from the SIM. Use it as the channel that still works when the internet does not: it needs only the LAN and the mobile network. Turn it on with a token in the `[webhook]` section (the address is `[server] listen`; `webhook.listen` from before 0.7.0 still works):
 
 ```toml
 [webhook]
-listen = "192.168.1.10:9097"
 token = "a long random string"
 to = ["+989121234567"]
 ```
@@ -93,7 +142,7 @@ A forwarder that is quiet looks the same whether nobody texted or the SIM stoppe
 
 - **Modem unreachable**: the inbox cannot be read.
 - **Off the network**: the modem's dashboard shows no SIM or no mobile network (`No Service`, `Limited`, ...).
-- **Heartbeat**: with `[heartbeat] number` set to the SIM's own number, `serve` texts itself every `interval` (12h by default) and expects the message back within `wait` (15m). This is the only check that proves SMS actually arrive: a suspended line, or broken SMS over LTE, passes the other two. Heartbeat messages start with `sms2telegram heartbeat ` and are never forwarded. A send that fails counts as missing and is retried within the hour. Each one is a normal SMS, so it costs what the operator charges for one.
+- **Heartbeat**: with `[heartbeat] number` set to the SIM's own number, `serve` texts itself every `interval` (12h by default) and expects the message back within `wait` (15m). This is the only check that proves SMS actually arrive: a suspended line, or broken SMS over LTE, passes the other two. Heartbeat messages start with `sms2telegram heartbeat ` and are never forwarded. Only the heartbeat that is out counts: an older one that the network delivers late is dropped without clearing the alert. A send that fails counts as missing and is retried within the hour. Each one is a normal SMS, so it costs what the operator charges for one.
 
 ```toml
 [heartbeat]
@@ -102,7 +151,7 @@ interval = "12h"
 wait = "15m"
 ```
 
-With `webhook.listen` set, the same listener serves Prometheus metrics at `/metrics`: when the inbox was last read, when every message was last delivered (a Telegram outage shows here), messages stored on the modem, SIM, registration, signal and modem uptime, and the heartbeat's last send, last return and `sms2telegram_heartbeat_missing`. Alerting on those from another machine also covers the forwarder itself being down.
+The listener serves Prometheus metrics at `/metrics`: when the inbox was last read, when every message was last delivered (a Telegram outage shows here), messages stored on the modem, SIM, registration, signal and modem uptime, the heartbeat's last send, last return and `sms2telegram_heartbeat_missing`, SMS sent and failed by who asked (`sms2telegram_sent_total{source="ui"}`), the size of the history, and alerts waiting for Telegram. Alerting on those from another machine also covers the forwarder itself being down.
 
 ## Naming senders from an address book
 

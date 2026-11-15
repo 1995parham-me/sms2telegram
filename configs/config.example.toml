@@ -5,6 +5,9 @@
 # The dongle's web UI. Unisoc MiFi dongles hand out 192.168.0.0/24 over RNDIS.
 url = "http://192.168.0.1"
 timeout = "10s"
+# The zone of the modem's clock, which the dates of received messages are in
+# (an IANA name such as "Asia/Tehran"). Empty is this machine's zone.
+timezone = ""
 
 [telegram]
 api_url = "https://api.telegram.org"
@@ -26,9 +29,10 @@ state_file = "/var/lib/sms2telegram/state.json"
 delete_forwarded = false
 
 [webhook]
-# Receive Alertmanager notifications here and text each one from the SIM, a
-# fallback that needs no internet. Empty (the default) turns it off.
-# listen = "192.168.1.10:9097"
+# Receive Alertmanager notifications at /alertmanager on the [server] listener
+# and text each one from the SIM, a fallback that needs no internet. It is on
+# once it has a token. (listen here is where the listener was set before
+# 0.7.0, and still works.)
 # Alertmanager sends it with http_config.authorization (type Bearer).
 token = ""
 # Every number gets every notification, one 160-character SMS each.
@@ -62,4 +66,43 @@ country = "98"
 refresh = "15m"
 timeout = "2m"
 # Defaults to contacts.json beside state_file.
+file = ""
+
+[server]
+# The one HTTP listener: the web UI at /, MCP at /mcp, the Alertmanager
+# webhook at /alertmanager and the metrics at /metrics. It has no TLS, so bind
+# it to a private address. Empty falls back to webhook.listen; with both empty
+# nothing is served.
+listen = ""
+# Reverse proxies whose X-Real-IP and X-Forwarded-Proto headers are believed.
+trusted_proxies = []
+
+[ui]
+# How long a login lasts.
+session_ttl = "720h"
+# The key that signs sessions, created when missing. Defaults to session.key
+# beside state_file.
+secret_file = ""
+
+# The web UI is on once it has a user: a name and the bcrypt hash of its
+# password, from `sms2telegram hash-password`.
+# [ui.users]
+# parham = "$2a$10$..."
+
+# The MCP endpoint is on once it has a token: a name and the SHA-256 of the
+# token, from `sms2telegram mcp-token <name>`.
+# [mcp.tokens]
+# claude = "..."
+
+[send]
+# What the web UI and MCP may send: SMS in any 24 hours (0 is no limit; alerts
+# and heartbeats never count) and the longest message in SMS parts.
+daily_limit = 30
+max_parts = 4
+# How long to wait for the modem to confirm a send or answer a USSD code.
+timeout = "1m"
+
+[archive]
+# The history of received and sent messages, one JSON object per line.
+# Defaults to messages.jsonl beside state_file.
 file = ""

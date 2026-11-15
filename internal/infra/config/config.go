@@ -29,6 +29,54 @@ type Config struct {
 	Webhook   Webhook   `json:"webhook"   koanf:"webhook"`
 	Heartbeat Heartbeat `json:"heartbeat" koanf:"heartbeat"`
 	Contacts  Contacts  `json:"contacts"  koanf:"contacts"`
+	Server    Server    `json:"server"    koanf:"server"`
+	UI        UI        `json:"ui"        koanf:"ui"`
+	MCP       MCP       `json:"mcp"       koanf:"mcp"`
+	Send      Send      `json:"send"      koanf:"send"`
+	Archive   Archive   `json:"archive"   koanf:"archive"`
+}
+
+// Server is the one HTTP listener that serves the web UI, the MCP endpoint,
+// the Alertmanager webhook and the metrics. An empty Listen falls back to
+// webhook.listen, where the listener was configured before 0.7.0.
+// TrustedProxies are the reverse proxies whose X-Real-IP and
+// X-Forwarded-Proto headers are believed.
+type Server struct {
+	Listen         string   `json:"listen"          koanf:"listen"`
+	TrustedProxies []string `json:"trusted_proxies" koanf:"trusted_proxies"`
+}
+
+// UI is the web UI at "/". Users maps a user name to the bcrypt hash of its
+// password (sms2telegram hash-password); without users the UI is off.
+// SecretFile holds the key that signs sessions; empty puts it beside the
+// state file.
+type UI struct {
+	Users      map[string]string `json:"-"           koanf:"users"`
+	SessionTTL time.Duration     `json:"session_ttl" koanf:"session_ttl"`
+	SecretFile string            `json:"secret_file" koanf:"secret_file"`
+}
+
+// MCP is the Model Context Protocol endpoint at /mcp. Tokens maps a token's
+// name to the SHA-256 of the token (sms2telegram mcp-token); without tokens
+// the endpoint is off.
+type MCP struct {
+	Tokens map[string]string `json:"-" koanf:"tokens"`
+}
+
+// Send limits what the web UI and MCP may send. DailyLimit is how many SMS go
+// out in any 24 hours (0 is no limit; alerts and heartbeats never count),
+// MaxParts the longest message in SMS parts (0 is no limit), and Timeout how
+// long to wait for the modem to confirm a send or answer a USSD code.
+type Send struct {
+	DailyLimit int           `json:"daily_limit" koanf:"daily_limit"`
+	MaxParts   int           `json:"max_parts"   koanf:"max_parts"`
+	Timeout    time.Duration `json:"timeout"     koanf:"timeout"`
+}
+
+// Archive is the history of received and sent messages. An empty File puts
+// it in messages.jsonl beside the state file.
+type Archive struct {
+	File string `json:"file" koanf:"file"`
 }
 
 // Contacts names senders from the CardDAV address book at URL (the
@@ -57,10 +105,13 @@ type Heartbeat struct {
 	File     string        `json:"file"     koanf:"file"`
 }
 
-// Modem locates the dongle's web UI.
+// Modem locates the dongle's web UI. Timezone is the zone the modem's clock
+// is in, which its message dates are read in (an IANA name such as
+// "Asia/Tehran"); empty is this machine's zone.
 type Modem struct {
-	URL     string        `json:"url"     koanf:"url"`
-	Timeout time.Duration `json:"timeout" koanf:"timeout"`
+	URL      string        `json:"url"      koanf:"url"`
+	Timeout  time.Duration `json:"timeout"  koanf:"timeout"`
+	Timezone string        `json:"timezone" koanf:"timezone"`
 }
 
 // Telegram selects the bot and the chat it writes to.
@@ -104,12 +155,15 @@ const (
 	heartbeatTimeout = 2 * time.Minute
 	contactsRefresh  = 15 * time.Minute
 	contactsTimeout  = 2 * time.Minute
+	sessionTTL       = 30 * 24 * time.Hour
+	dailyLimit       = 30
+	maxParts         = 4
 )
 
 // Default returns the configuration used when nothing overrides it.
 func Default() Config {
 	return Config{
-		Modem: Modem{URL: "http://192.168.0.1", Timeout: modemTimeout},
+		Modem: Modem{URL: "http://192.168.0.1", Timeout: modemTimeout, Timezone: ""},
 		Telegram: Telegram{
 			APIURL:  "https://api.telegram.org",
 			Token:   "",
@@ -139,6 +193,11 @@ func Default() Config {
 			Timeout:  contactsTimeout,
 			File:     "",
 		},
+		Server:  Server{Listen: "", TrustedProxies: nil},
+		UI:      UI{Users: nil, SessionTTL: sessionTTL, SecretFile: ""},
+		MCP:     MCP{Tokens: nil},
+		Send:    Send{DailyLimit: dailyLimit, MaxParts: maxParts, Timeout: smsTimeout},
+		Archive: Archive{File: ""},
 	}
 }
 

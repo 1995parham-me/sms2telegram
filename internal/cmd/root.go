@@ -51,6 +51,8 @@ func run() error {
 			serveCommand(),
 			listCommand(),
 			sendCommand(),
+			hashPasswordCommand(),
+			mcpTokenCommand(),
 		},
 	}
 

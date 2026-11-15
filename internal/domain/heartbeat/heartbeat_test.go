@@ -138,3 +138,41 @@ func TestSurvivesRestart(t *testing.T) {
 		t.Fatalf("text %q lacks the prefix", out.texts[0])
 	}
 }
+
+// A heartbeat the network delivers after the next one went out says nothing
+// about whether SMS arrive now.
+func TestALateHeartbeatDoesNotCoverTheCurrentOne(t *testing.T) {
+	t.Parallel()
+
+	start := begin()
+
+	out := &outbox{texts: nil, err: nil}
+	h := open(t, out, filepath.Join(t.TempDir(), "hb.json"))
+
+	if err := h.Send(t.Context(), start); err != nil {
+		t.Fatal(err)
+	}
+
+	next := start.Add(interval)
+	if err := h.Send(t.Context(), next); err != nil {
+		t.Fatal(err)
+	}
+
+	late := sms.SMS{Sender: "+989390909540", Name: "", Date: "d", Content: out.texts[0], Position: 0}
+	if !h.Consume(late, next.Add(time.Minute)) {
+		t.Fatal("a late heartbeat must still be consumed, not forwarded")
+	}
+
+	if !h.Status(next.Add(wait)).Missing {
+		t.Fatal("the late heartbeat hid the current one, which never came back")
+	}
+
+	current := sms.SMS{Sender: "+989390909540", Name: "", Date: "d", Content: out.texts[1], Position: 0}
+	if !h.Consume(current, next.Add(wait+time.Minute)) || h.Status(next.Add(wait+time.Minute)).Missing {
+		t.Fatal("the current heartbeat came back and is still missing")
+	}
+
+	if !heartbeat.Is("  "+heartbeat.Prefix+"1") || heartbeat.Is("Code: 1234") {
+		t.Fatal("Is misreads a heartbeat text")
+	}
+}

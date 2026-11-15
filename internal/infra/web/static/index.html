@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="noindex">
+<title>sms2telegram</title>
+<link rel="icon" href="static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="static/style.css">
+<script src="static/app.js" defer></script>
+</head>
+<body>
+
+<svg class="sprite" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12 20 4l-6 16-3-7z"/><path d="m11 13 9-9"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+  <symbol id="i-hash" viewBox="0 0 24 24"><path d="M9 4 7 20M17 4l-2 16M4 9h17M3 15h17"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2-5h6"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13 6 5h12l2 8v6H4z"/><path d="M4 13h5l1 3h4l1-3h5"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19z"/><path d="M12 10v5M12 17.5v.5"/></symbol>
+</svg>
+
+<main id="login" class="login" hidden>
+  <form id="login-form" class="card" autocomplete="on">
+    <div class="brand"><img src="static/icon.svg" alt="" width="36" height="36"><span>sms2telegram</span></div>
+    <p class="muted">The SIM's messages, in one place.</p>
+    <label>User name<input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+    <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+    <p id="login-error" class="error" role="alert" hidden></p>
+    <button class="primary" type="submit">Log in</button>
+  </form>
+</main>
+
+<div id="app" class="app" hidden>
+  <header class="top">
+    <a class="brand" href="./"><img src="static/icon.svg" alt="" width="26" height="26"><span>sms2telegram</span></a>
+    <button id="status" class="pills" type="button" title="Status" aria-haspopup="dialog">
+      <span class="pill" id="pill-net"><span class="bars" id="bars"><i></i><i></i><i></i><i></i></span><span id="net-text">…</span></span>
+      <span class="pill" id="pill-beat"><svg class="icon"><use href="#i-heart"/></svg><span id="beat-text">…</span></span>
+      <span class="pill" id="pill-quota"><svg class="icon"><use href="#i-send"/></svg><span id="quota-text">…</span></span>
+    </button>
+    <span class="spacer"></span>
+    <button id="open-ussd" class="ghost" type="button"><svg class="icon"><use href="#i-hash"/></svg><span>USSD</span></button>
+    <button id="logout" class="ghost" type="button" title="Log out"><svg class="icon"><use href="#i-out"/></svg><span id="who"></span></button>
+  </header>
+
+  <div class="panes">
+    <aside class="side">
+      <div class="side-head">
+        <label class="search"><svg class="icon"><use href="#i-search"/></svg>
+          <input id="search" type="search" placeholder="Search messages" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
+        <button id="new" class="primary round" type="button" title="New message (n)"><svg class="icon"><use href="#i-plus"/></svg></button>
+      </div>
+      <nav id="list" class="list" aria-label="Conversations"></nav>
+    </aside>
+
+    <section class="thread" aria-live="polite">
+      <div id="empty" class="empty">
+        <svg class="icon big"><use href="#i-chat"/></svg>
+        <p>Pick a conversation, or start a new message.</p>
+      </div>
+      <div id="conv" class="conv" hidden>
+        <header class="conv-head">
+          <button id="back" class="ghost round" type="button" title="Back"><svg class="icon"><use href="#i-back"/></svg></button>
+          <span class="avatar" id="conv-avatar"></span>
+          <div class="grow"><strong id="conv-name" dir="auto"></strong><span id="conv-sub" class="muted mono"></span></div>
+        </header>
+        <div id="messages" class="messages"></div>
+        <form id="composer" class="composer">
+          <textarea id="text" rows="1" dir="auto" placeholder="Write an SMS" maxlength="1600"></textarea>
+          <button class="primary round" type="submit" title="Send (Enter)"><svg class="icon"><use href="#i-send"/></svg></button>
+          <span id="counter" class="counter mono"></span>
+        </form>
+        <p id="readonly" class="readonly muted" hidden>This sender has no number to reply to.</p>
+      </div>
+    </section>
+  </div>
+</div>
+
+<dialog id="new-dialog" class="sheet">
+  <form id="new-form" method="dialog">
+    <h2>New message</h2>
+    <label>To<input id="new-to" inputmode="tel" autocomplete="off" spellcheck="false" placeholder="A number, or a name from the address book" required></label>
+    <div id="suggest" class="suggest"></div>
+    <div class="actions"><button type="button" class="ghost" data-close>Cancel</button><button class="primary" type="submit">Continue</button></div>
+  </form>
+</dialog>
+
+<dialog id="ussd-dialog" class="sheet">
+  <form id="ussd-form" method="dialog">
+    <h2>USSD</h2>
+    <p class="muted">Dial a code such as <code>*555#</code>, then answer the menu with its digit. Some codes change the line's settings.</p>
+    <div id="ussd-log" class="ussd-log" aria-live="polite"></div>
+    <div class="row"><input id="ussd-code" class="mono" inputmode="tel" autocomplete="off" placeholder="*555#" pattern="[0-9*#]+" required>
+      <button class="primary" type="submit">Dial</button></div>
+    <div class="actions"><button type="button" class="ghost" data-close>Close</button></div>
+  </form>
+</dialog>
+
+<dialog id="status-dialog" class="sheet">
+  <h2>Status</h2>
+  <dl id="status-list" class="facts"></dl>
+  <div class="actions"><button type="button" class="ghost" data-close>Close</button></div>
+</dialog>
+
+<div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

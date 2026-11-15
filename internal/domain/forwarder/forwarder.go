@@ -37,6 +37,9 @@ type Forwarder struct {
 	consume func(sms.SMS) bool
 	// records is how many messages the inbox held at the last read.
 	records int
+	// observe, when set, is shown every message that was delivered, now or on
+	// an earlier pass, so a history can be kept of them.
+	observe func(sms.SMS)
 }
 
 // New builds a Forwarder over the given ports. With prune, every pass that
@@ -53,8 +56,14 @@ func New(inbox sms.Inbox, notifier sms.Notifier, store sms.Store, prune bool) *F
 		waiting:  map[string]time.Time{},
 		consume:  nil,
 		records:  0,
+		observe:  nil,
 	}
 }
+
+// SetObserver installs fn to see every delivered message. It is called for a
+// message when it is delivered and again whenever the message is read from
+// the inbox later, so fn must expect repeats, and consumed messages among them.
+func (f *Forwarder) SetObserver(fn func(sms.SMS)) { f.observe = fn }
 
 // SetConsumer installs fn to claim messages that must not be forwarded.
 func (f *Forwarder) SetConsumer(fn func(sms.SMS) bool) { f.consume = fn }
@@ -155,6 +164,8 @@ func (f *Forwarder) deliver(ctx context.Context, msgs []sms.SMS) (int, error) {
 			return sent, fmt.Errorf("recording delivery: %w", err)
 		}
 
+		f.show(msg)
+
 		sent++
 	}
 
@@ -169,6 +180,13 @@ func (f *Forwarder) forgetGone(msgs []sms.SMS) {
 	}
 
 	maps.DeleteFunc(f.waiting, func(key string, _ time.Time) bool { return !keep[key] })
+}
+
+// show hands a delivered message to the observer.
+func (f *Forwarder) show(msg sms.SMS) {
+	if f.observe != nil {
+		f.observe(msg)
+	}
 }
 
 // claim hands msg to the consumer and, when it takes it, records it as
@@ -213,7 +231,13 @@ func (f *Forwarder) unseen(ctx context.Context) ([]sms.SMS, int, error) {
 		for _, msg := range page.Messages {
 			if !f.seen(msg) {
 				out = append(out, msg)
+
+				continue
 			}
+
+			// Delivered before the history existed, or while it could not
+			// be written: this is its second chance.
+			f.show(msg)
 		}
 
 		if len(out) == before {

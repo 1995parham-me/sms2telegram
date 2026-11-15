@@ -106,9 +106,15 @@ func (c *Client) state(ctx context.Context, endpoint string, query url.Values) (
 	var r struct {
 		State json.RawMessage `json:"state"`
 	}
-	if err := json.Unmarshal(body, &r); err != nil {
+	if err := json.Unmarshal(fromCESU8(body), &r); err != nil {
 		return "", fmt.Errorf("decoding %s: %w", endpoint, err)
 	}
 
-	return strings.Trim(string(r.State), `"`), nil
+	// A string state may be a whole USSD answer, with escapes to decode.
+	var text string
+	if json.Unmarshal(r.State, &text) == nil {
+		return text, nil
+	}
+
+	return string(r.State), nil
 }

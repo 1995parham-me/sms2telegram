@@ -4,6 +4,7 @@
 package contacts
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"unicode"
@@ -101,6 +103,43 @@ func (d *Directory) Name(sender string) string {
 	defer d.mu.RUnlock()
 
 	return d.names[key]
+}
+
+// Entry is one number and the name on its card.
+type Entry struct {
+	Name   string `json:"name"`
+	Number string `json:"number"`
+}
+
+// Search returns up to limit entries whose name or number contains query,
+// ignoring case, in name order. An empty query matches nothing.
+func (d *Directory) Search(query string, limit int) []Entry {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return nil
+	}
+
+	d.mu.RLock()
+
+	var out []Entry
+
+	for number, name := range d.names {
+		if strings.Contains(strings.ToLower(name), query) || strings.Contains(number, query) {
+			out = append(out, Entry{Name: name, Number: number})
+		}
+	}
+
+	d.mu.RUnlock()
+
+	slices.SortFunc(out, func(a, b Entry) int {
+		return cmp.Or(strings.Compare(a.Name, b.Name), strings.Compare(a.Number, b.Number))
+	})
+
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+
+	return out
 }
 
 // Refresh reloads the cards when the source's change tag moved, and reports

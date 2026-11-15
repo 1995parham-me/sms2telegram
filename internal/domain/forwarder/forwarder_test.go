@@ -299,3 +299,40 @@ func TestForwardReleasesIncompleteAfterHold(t *testing.T) {
 	now = now.Add(forwarder.DefaultHold)
 	forward(t, f, in, 1, 1)
 }
+
+// The observer is how the history is kept: it must see a message when it is
+// delivered, and see it again on a later read, which is the second chance for
+// a message delivered before there was a history.
+func TestObserverSeesDeliveredMessages(t *testing.T) {
+	t.Parallel()
+
+	in := messages()
+	n := &notifier{got: nil, failAt: 2}
+	f := forwarder.New(in, n, store{}, false)
+
+	var seen []string
+
+	f.SetObserver(func(msg sms.SMS) { seen = append(seen, msg.Content) })
+
+	// The second delivery fails: only the first message was delivered.
+	if _, err := f.Forward(t.Context()); err == nil {
+		t.Fatal("the failing delivery was not reported")
+	}
+
+	oldest, middle, newest := in.msgs[2].Content, in.msgs[1].Content, in.msgs[0].Content
+
+	if len(seen) != 1 || seen[0] != oldest {
+		t.Fatalf("after a failed pass the observer saw %v", seen)
+	}
+
+	n.failAt = 0
+
+	if _, err := f.Forward(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The delivered one is shown again from the read, then the two new ones.
+	if want := []string{oldest, oldest, middle, newest}; !slices.Equal(seen, want) {
+		t.Fatalf("the observer saw %v, want %v", seen, want)
+	}
+}

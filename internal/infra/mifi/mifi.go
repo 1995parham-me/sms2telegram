@@ -34,6 +34,8 @@ type Client struct {
 	// sending serializes Send: the modem reports the result of "the last"
 	// message, so two sends in flight would read each other's result.
 	sending sync.Mutex
+	// ussd serializes USSD: the modem has one session and one answer slot.
+	ussd sync.Mutex
 }
 
 // New returns a client for the modem web UI at baseURL.
@@ -56,7 +58,7 @@ func NewWithClient(baseURL string, client *http.Client) (*Client, error) {
 		return nil, fmt.Errorf("parsing modem url %q: %w", baseURL, err)
 	}
 
-	return &Client{base: base, http: client, sending: sync.Mutex{}}, nil
+	return &Client{base: base, http: client, sending: sync.Mutex{}, ussd: sync.Mutex{}}, nil
 }
 
 type page struct {

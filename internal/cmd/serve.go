@@ -11,30 +11,43 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"time"
+	_ "time/tzdata" // the modem's zone must load on a host without zoneinfo.
 
 	"github.com/urfave/cli/v3"
 
+	"github.com/1995parham-me/sms2telegram/internal/domain/console"
 	"github.com/1995parham-me/sms2telegram/internal/domain/contacts"
 	"github.com/1995parham-me/sms2telegram/internal/domain/forwarder"
 	"github.com/1995parham-me/sms2telegram/internal/domain/health"
 	"github.com/1995parham-me/sms2telegram/internal/domain/heartbeat"
+	"github.com/1995parham-me/sms2telegram/internal/domain/notice"
 	"github.com/1995parham-me/sms2telegram/internal/domain/sms"
+	"github.com/1995parham-me/sms2telegram/internal/infra/archive"
 	"github.com/1995parham-me/sms2telegram/internal/infra/carddav"
 	"github.com/1995parham-me/sms2telegram/internal/infra/config"
+	"github.com/1995parham-me/sms2telegram/internal/infra/mcpserver"
 	"github.com/1995parham-me/sms2telegram/internal/infra/metrics"
 	"github.com/1995parham-me/sms2telegram/internal/infra/mifi"
 	"github.com/1995parham-me/sms2telegram/internal/infra/state"
 	"github.com/1995parham-me/sms2telegram/internal/infra/telegram"
+	"github.com/1995parham-me/sms2telegram/internal/infra/web"
 	"github.com/1995parham-me/sms2telegram/internal/infra/webhook"
 )
 
 var (
 	errMissingTelegram = errors.New("telegram.token and telegram.chat_id are required")
-	errWebhookConfig   = errors.New("webhook.listen needs webhook.token and at least one number in webhook.to")
+	errWebhookConfig   = errors.New("the webhook needs webhook.token and at least one number in webhook.to")
+	errNoListener      = errors.New("ui.users and mcp.tokens need server.listen")
 )
 
-// webhookHeaderTimeout bounds how long a client may take to send its headers.
-const webhookHeaderTimeout = 10 * time.Second
+// How long a client may take to send its headers and its request, how long an
+// idle connection is kept, and how long a shutdown waits for open requests.
+const (
+	headerTimeout   = 10 * time.Second
+	readTimeout     = 30 * time.Second
+	idleTimeout     = 2 * time.Minute
+	shutdownTimeout = 5 * time.Second
+)
 
 func serveCommand() *cli.Command {
 	return &cli.Command{ //nolint:exhaustruct_v5 // only the set fields matter.
@@ -76,13 +89,11 @@ func serve(ctx context.Context, cmd *cli.Command) error {
 		go svc.contacts.run(ctx, cfg.Contacts.Refresh, svc.metrics)
 	}
 
-	if cfg.Webhook.Listen != "" {
-		stop, err := listen(ctx, cfg.Webhook, svc)
-		if err != nil {
-			return err
-		}
-		defer stop()
+	stop, err := listen(ctx, cfg, svc)
+	if err != nil {
+		return err
 	}
+	defer stop()
 
 	return loop(ctx, cfg, svc)
 }
@@ -95,6 +106,9 @@ type service struct {
 	heartbeat *heartbeat.Heartbeat
 	metrics   *metrics.Registry
 	contacts  *addressBook
+	console   *console.Console
+	notices   *notice.Queue
+	location  *time.Location
 }
 
 // addressBook keeps the sender names fresh. A failed read keeps the names
@@ -138,39 +152,111 @@ func (a *addressBook) refresh(ctx context.Context, reg *metrics.Registry) {
 	})
 }
 
-// listen serves the Alertmanager webhook and the metrics until the returned
-// stop is called. It binds before returning, so a taken address fails the start.
-func listen(ctx context.Context, cfg config.Webhook, svc *service) (func(), error) {
-	if cfg.Token == "" || len(cfg.To) == 0 {
-		return nil, errWebhookConfig
+// alertOutbox sends the Alertmanager webhook's SMS through the console, so
+// they are in the history like every other sent message.
+type alertOutbox struct{ console *console.Console }
+
+// Send implements sms.Outbox.
+func (a alertOutbox) Send(ctx context.Context, to, text string) error {
+	_, err := a.console.Send(ctx, to, text, console.SourceAlert)
+
+	return err //nolint:wrapcheck // the console's error already names the number.
+}
+
+// routes builds the one HTTP handler: the metrics always, and the web UI, the
+// MCP endpoint and the Alertmanager webhook when each is configured.
+func routes(cfg config.Config, svc *service) (*http.ServeMux, []string, error) {
+	mux := http.NewServeMux()
+	mux.Handle(metrics.Path, svc.metrics)
+
+	serving := []string{metrics.Path}
+
+	// The webhook is on when it has a token, or when the listener is still
+	// configured in its section, where a missing token is a mistake.
+	if cfg.Webhook.Token != "" || cfg.Webhook.Listen != "" {
+		if cfg.Webhook.Token == "" || len(cfg.Webhook.To) == 0 {
+			return nil, nil, errWebhookConfig
+		}
+
+		mux.Handle(webhook.Path, webhook.New(alertOutbox{console: svc.console}, cfg.Webhook.To, cfg.Webhook.Token,
+			cfg.Webhook.Timeout))
+
+		serving = append(serving, webhook.Path)
+	}
+
+	if len(cfg.MCP.Tokens) > 0 {
+		mux.Handle(mcpserver.Path, mcpserver.Handler(svc.console, cfg.MCP.Tokens, svc.metrics.Snapshot().Version,
+			svc.location))
+
+		serving = append(serving, mcpserver.Path)
+	}
+
+	if len(cfg.UI.Users) > 0 {
+		ui, err := web.New(svc.console, web.Options{
+			Users:          cfg.UI.Users,
+			SecretFile:     cmp.Or(cfg.UI.SecretFile, beside(cfg, "session.key")),
+			SessionTTL:     cfg.UI.SessionTTL,
+			TrustedProxies: cfg.Server.TrustedProxies,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("opening the web UI: %w", err)
+		}
+
+		ui.Register(mux)
+
+		serving = append(serving, "/")
+	}
+
+	return mux, serving, nil
+}
+
+// beside is the path of a file kept in the state file's directory.
+func beside(cfg config.Config, name string) string {
+	return filepath.Join(filepath.Dir(cfg.Forwarder.StateFile), name)
+}
+
+// listen serves the HTTP side until the returned stop is called. It binds
+// before returning, so a taken address fails the start. Without an address
+// nothing is served.
+func listen(ctx context.Context, cfg config.Config, svc *service) (func(), error) {
+	address := cmp.Or(cfg.Server.Listen, cfg.Webhook.Listen)
+	if address == "" {
+		if len(cfg.UI.Users) > 0 || len(cfg.MCP.Tokens) > 0 {
+			return nil, errNoListener
+		}
+
+		return func() {}, nil
+	}
+
+	mux, serving, err := routes(cfg, svc)
+	if err != nil {
+		return nil, err
 	}
 
 	//nolint:exhaustruct_v5 // the zero ListenConfig is the default.
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.Listen)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", address)
 	if err != nil {
-		return nil, fmt.Errorf("webhook.listen: %w", err)
+		return nil, fmt.Errorf("server.listen: %w", err)
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle(webhook.Path, webhook.New(svc.modem, cfg.To, cfg.Token, cfg.Timeout))
-	mux.Handle(metrics.Path, svc.metrics)
-
+	// No write timeout: the UI's event stream and an MCP wait stay open.
 	srv := &http.Server{ //nolint:exhaustruct_v5 // only the set fields matter.
 		Handler:           mux,
-		ReadHeaderTimeout: webhookHeaderTimeout,
+		ReadHeaderTimeout: headerTimeout,
+		ReadTimeout:       readTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.ErrorContext(ctx, "webhook stopped", "error", err)
+			slog.ErrorContext(ctx, "HTTP server stopped", "error", err)
 		}
 	}()
 
-	slog.InfoContext(ctx, "serving the alert webhook and metrics",
-		"address", ln.Addr().String(), "path", webhook.Path, "numbers", len(cfg.To))
+	slog.InfoContext(ctx, "serving", "address", ln.Addr().String(), "paths", serving)
 
 	return func() {
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.Timeout)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 		defer cancel()
 
 		_ = srv.Shutdown(shutdownCtx)
@@ -199,6 +285,16 @@ func loop(ctx context.Context, cfg config.Config, svc *service) error {
 			beat.tick(ctx, svc)
 		}
 
+		// An alert raised while Telegram was unreachable goes out now.
+		if err := svc.notices.Flush(ctx); err != nil {
+			slog.DebugContext(ctx, "alerts still waiting for Telegram", "error", err, "waiting", svc.notices.Len())
+		}
+
+		svc.metrics.Update(func(s *metrics.Snapshot) {
+			s.Notices = svc.notices.Len()
+			s.Archived = svc.console.Archive().Len()
+		})
+
 		select {
 		case <-ctx.Done():
 			return nil
@@ -217,7 +313,7 @@ func watchModem(ctx context.Context, cfg config.Config, svc *service, passErr er
 
 	// Only modem failures count: a Telegram outage cannot be reported over Telegram.
 	if passErr == nil || errors.Is(passErr, forwarder.ErrInbox) {
-		alert(ctx, svc.bot, modem, passErr, modemDown, modemBack)
+		alert(ctx, svc.notices, modem, passErr, modemDown, modemBack)
 	}
 
 	if known {
@@ -226,7 +322,7 @@ func watchModem(ctx context.Context, cfg config.Config, svc *service, passErr er
 			regErr = errNotRegistered
 		}
 
-		alert(ctx, svc.bot, network, regErr, networkDown, networkBack)
+		alert(ctx, svc.notices, network, regErr, networkDown, networkBack)
 	}
 }
 
@@ -316,8 +412,14 @@ func (b *beatWatch) tick(ctx context.Context, svc *service) {
 		text = "✅ sms2telegram: the heartbeat SMS arrived, SMS are being received again."
 	}
 
-	if err := svc.bot.Text(ctx, text); err != nil {
-		slog.WarnContext(ctx, "alert not delivered", "error", err)
+	post(ctx, svc.notices, text)
+}
+
+// post queues an alert. One that Telegram does not take now stays queued and
+// is tried again on every pass.
+func post(ctx context.Context, notices *notice.Queue, text string) {
+	if err := notices.Post(ctx, text); err != nil {
+		slog.WarnContext(ctx, "alert not delivered yet, it stays queued", "error", err)
 	}
 }
 
@@ -338,6 +440,11 @@ func build(cfg config.Config, version string) (*service, error) {
 
 	bot := telegram.New(cfg.Telegram.APIURL, cfg.Telegram.Token, cfg.Telegram.ChatID, cfg.Telegram.Timeout)
 
+	location, history, err := openHistory(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	svc := &service{
 		fwd:       forwarder.New(modem, bot, store, cfg.Forwarder.DeleteForwarded),
 		bot:       bot,
@@ -345,22 +452,14 @@ func build(cfg config.Config, version string) (*service, error) {
 		heartbeat: nil,
 		metrics:   metrics.New(version),
 		contacts:  nil,
+		console:   nil,
+		notices:   notice.New(bot.Text, notice.DefaultMax),
+		location:  location,
 	}
 
-	if c := cfg.Contacts; c.URL != "" {
-		file := cmp.Or(c.File, filepath.Join(filepath.Dir(cfg.Forwarder.StateFile), "contacts.json"))
-
-		dir, err := contacts.Open(c.Country, file)
-		if err != nil {
-			return nil, fmt.Errorf("opening contacts: %w", err)
-		}
-
-		svc.contacts = &addressBook{dir: dir, src: carddav.New(c.URL, c.Username, c.Password, c.Timeout)}
-		bot.SetNames(dir.Name)
-		svc.metrics.Update(func(s *metrics.Snapshot) {
-			s.ContactsOn = true
-			s.Contacts = dir.Len()
-		})
+	names, err := openContacts(cfg, svc)
+	if err != nil {
+		return nil, err
 	}
 
 	if hb := cfg.Heartbeat; hb.Number != "" {
@@ -374,10 +473,138 @@ func build(cfg config.Config, version string) (*service, error) {
 		svc.fwd.SetConsumer(func(msg sms.SMS) bool { return svc.heartbeat.Consume(msg, time.Now()) })
 	}
 
+	svc.console = newConsole(cfg, svc, history, names)
+
 	return svc, nil
 }
 
-func alert(ctx context.Context, bot *telegram.Bot, tracker *health.Tracker, passErr error, down, back string) {
+// openContacts names senders from the address book, when one is configured,
+// and returns it for the console to search; nil without one.
+//
+//nolint:nilnil // no address book is not an error.
+func openContacts(cfg config.Config, svc *service) (*contacts.Directory, error) {
+	c := cfg.Contacts
+	if c.URL == "" {
+		return nil, nil
+	}
+
+	dir, err := contacts.Open(c.Country, cmp.Or(c.File, beside(cfg, "contacts.json")))
+	if err != nil {
+		return nil, fmt.Errorf("opening contacts: %w", err)
+	}
+
+	svc.contacts = &addressBook{dir: dir, src: carddav.New(c.URL, c.Username, c.Password, c.Timeout)}
+	svc.bot.SetNames(dir.Name)
+	svc.metrics.Update(func(s *metrics.Snapshot) {
+		s.ContactsOn = true
+		s.Contacts = dir.Len()
+	})
+
+	return dir, nil
+}
+
+// openHistory opens the message history and the zone its dates are read in.
+func openHistory(cfg config.Config) (*time.Location, *archive.Store, error) {
+	location := time.Local //nolint:gosmopolitan // the host's zone is the documented default.
+
+	if cfg.Modem.Timezone != "" {
+		var err error
+		if location, err = time.LoadLocation(cfg.Modem.Timezone); err != nil {
+			return nil, nil, fmt.Errorf("modem.timezone: %w", err)
+		}
+	}
+
+	history, err := archive.Open(cmp.Or(cfg.Archive.File, beside(cfg, "messages.jsonl")))
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening the message history: %w", err)
+	}
+
+	return location, history, nil
+}
+
+// newConsole builds what the web UI and MCP work through, and makes the
+// forwarder record every delivered message in its history.
+func newConsole(cfg config.Config, svc *service, history *archive.Store, dir *contacts.Directory) *console.Console {
+	// A nil directory must become a nil interface, not an interface holding nil.
+	var names console.Names
+	if dir != nil {
+		names = dir
+	}
+
+	c := console.New(history, svc.modem, svc.modem, names, console.Options{
+		Country:    cfg.Contacts.Country,
+		DailyLimit: cfg.Send.DailyLimit,
+		MaxParts:   cfg.Send.MaxParts,
+		Timeout:    cfg.Send.Timeout,
+		Location:   svc.location,
+	})
+
+	c.SetStatus(func() console.Status { return statusOf(svc.metrics.Snapshot()) })
+
+	c.OnSent(func(source string, err error) {
+		svc.metrics.Update(func(s *metrics.Snapshot) {
+			if err != nil {
+				s.SendFailed = count(s.SendFailed, source)
+
+				return
+			}
+
+			s.Sent = count(s.Sent, source)
+		})
+	})
+
+	svc.fwd.SetObserver(func(msg sms.SMS) {
+		// Heartbeats prove the SIM receives; they are not anyone's messages.
+		if heartbeat.Is(msg.Content) {
+			return
+		}
+
+		if err := c.Received(msg); err != nil {
+			slog.Warn("message not recorded in the history", "error", err)
+		}
+	})
+
+	return c
+}
+
+func count(counts map[string]int, key string) map[string]int {
+	if counts == nil {
+		counts = map[string]int{}
+	}
+
+	counts[key]++
+
+	return counts
+}
+
+// statusOf is the metrics snapshot as the UI and MCP show it.
+func statusOf(s metrics.Snapshot) console.Status {
+	return console.Status{
+		Version:           s.Version,
+		ModemOK:           s.StatusOK,
+		SIM:               s.SIM,
+		Registered:        s.Registered,
+		Network:           s.Network,
+		SignalDBm:         s.SignalDBm,
+		ModemUptime:       int64(s.ModemUptime.Seconds()),
+		InboxRead:         s.InboxOK,
+		Delivered:         s.PassOK,
+		Inbox:             s.InboxMessages,
+		Forwarded:         s.Forwarded,
+		Heartbeat:         s.HeartbeatOn,
+		HeartbeatSent:     s.HeartbeatSent,
+		HeartbeatReceived: s.HeartbeatBack,
+		HeartbeatMissing:  s.HeartbeatMiss,
+		Notices:           s.Notices,
+		Contacts:          s.Contacts,
+		Archive:           0,
+		DailyLimit:        0,
+		Remaining:         0,
+		USSD:              false,
+	}
+}
+
+func alert(ctx context.Context, notices *notice.Queue, tracker *health.Tracker, passErr error, down, back string) {
 	now := time.Now()
 
 	var text string
@@ -391,9 +618,7 @@ func alert(ctx context.Context, bot *telegram.Bot, tracker *health.Tracker, pass
 		return
 	}
 
-	if err := bot.Text(ctx, text); err != nil {
-		slog.WarnContext(ctx, "alert not delivered", "error", err)
-	}
+	post(ctx, notices, text)
 }
 
 func pass(ctx context.Context, svc *service) error {

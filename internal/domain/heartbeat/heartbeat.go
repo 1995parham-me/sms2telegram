@@ -98,17 +98,26 @@ func New(outbox sms.Outbox, number string, interval, wait, timeout time.Duration
 	return h, nil
 }
 
+// Is reports whether content is the text of a heartbeat.
+func Is(content string) bool {
+	return strings.HasPrefix(strings.TrimSpace(content), Prefix)
+}
+
 // Consume reports whether msg is a heartbeat, recording its return if so.
 // The forwarder skips consumed messages.
+//
+// Only the heartbeat that is out now counts as a return. An older one that
+// the network delivers late is still consumed, but it says nothing about
+// whether SMS arrive now, and counting it used to hide a missing heartbeat.
 func (h *Heartbeat) Consume(msg sms.SMS, now time.Time) bool {
-	if !strings.HasPrefix(strings.TrimSpace(msg.Content), Prefix) {
+	if !Is(msg.Content) {
 		return false
 	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if now.After(h.rec.Received) {
+	if h.current(msg.Content) && now.After(h.rec.Received) {
 		h.rec.Received = now
 		_ = h.save() // a lost write only means one extra heartbeat after a restart.
 	}
@@ -170,6 +179,18 @@ func (h *Heartbeat) Status(now time.Time) Status {
 		Received:   h.rec.Received,
 		Missing:    h.rec.SendFailed || (outstanding && now.Sub(h.rec.Sent) >= h.wait),
 	}
+}
+
+// current reports whether the heartbeat text was stamped at or after the last
+// send. A text without a readable stamp counts, as it did before stamps were
+// checked.
+func (h *Heartbeat) current(content string) bool {
+	stamp, err := strconv.ParseInt(strings.TrimPrefix(strings.TrimSpace(content), Prefix), 10, 64)
+	if err != nil || h.rec.Sent.IsZero() {
+		return true
+	}
+
+	return stamp >= h.rec.Sent.Unix()
 }
 
 func (h *Heartbeat) save() error {
